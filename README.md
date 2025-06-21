@@ -1,1 +1,145 @@
-# MDC
+# MDC - Movie Data Capture
+
+A command-line tool that scans directories for video files, extracts movie codes from filenames, fetches metadata, and organizes files into properly structured folders with NFO files and cover images.
+
+## Features
+
+- **Recursive Directory Scanning**: Scans input directory recursively for video files
+- **Video Format Support**: Supports mp4, mkv, wmv, avi video formats
+- **Code Extraction**: Automatically extracts movie codes (like ABCD-180) from filenames using regex
+- **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
+- **File Organization**: Creates organized folder structure with uppercase code names
+- **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
+- **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
+- **File Management**: Renames and moves video files to organized folders
+
+## Installation
+
+### Prerequisites
+
+- Go 1.24.2 or later
+- Internet connection for fetching metadata and cover images
+
+### Build from Source
+
+```bash
+git clone <repository-url>
+cd capture
+go mod tidy
+go build -o mdc
+```
+
+## Usage
+
+### Basic Usage
+
+```bash
+# Scan current directory and organize to ./output
+./mdc
+
+# Specify input and output directories
+./mdc -i /path/to/videos -o /path/to/organized
+
+# Show help
+./mdc --help
+```
+
+### Command Line Options
+
+- `-i, --input`: Input directory to scan for video files (default: current directory)
+- `-o, --output`: Output directory for organized files (default: ./output)
+
+### Example
+
+```bash
+# Organize videos from Downloads folder to Movies folder
+./mdc -i ~/Downloads -o ~/Movies
+```
+
+## How It Works
+
+1. **Scanning**: Recursively scans the input directory for video files with supported extensions
+2. **Code Extraction**: Uses regex pattern `([A-Z]+-\d+)` to extract codes like "ABCD-180" from filenames
+3. **Metadata Fetching**: Calls `client.SearchByCode()` to get movie data from javdb
+4. **Folder Creation**: Creates folders named after the codes (uppercase, e.g., `ABCD-180/`)
+5. **NFO Creation**: Generates XML NFO files with movie metadata
+6. **Image Download**: Downloads cover images as poster.jpg and fanart.jpg
+7. **File Moving**: Renames video files to match codes and moves them to respective folders
+
+## Output Structure
+
+```
+output/
+├── ABCD-180/
+│   ├── ABCD-180.mp4          # Renamed video file
+│   ├── ABCD-180.nfo          # Movie metadata
+│   ├── poster.jpg            # Cover image
+│   └── fanart.jpg            # Fanart image
+└── ANOTHER-123/
+    ├── ANOTHER-123.mkv
+    ├── ANOTHER-123.nfo
+    ├── poster.jpg
+    └── fanart.jpg
+```
+
+## NFO File Content
+
+The generated NFO files include:
+- Title and original title
+- Plot description with code and score
+- Year (extracted from publication date)
+- Genres (from tags)
+- Actresses (as actors)
+- Unique ID (movie code)
+- Poster and fanart references
+
+## Supported Video Extensions
+
+- `.mp4`
+- `.mkv`
+- `.wmv`
+- `.avi`
+
+## Code Pattern Recognition
+
+The tool recognizes movie codes in the following format:
+- Pattern: `[A-Z]+-\d+`
+- Examples: `ABCD-180`, `HHHHHH-123`, `XYZ-456`
+- Case insensitive in filename, but output folders are uppercase
+
+## Error Handling
+
+- Skips files without recognizable codes
+- Continues processing other files if one fails
+- Provides detailed progress and error messages
+- Handles network timeouts for image downloads
+
+## Example Output
+
+```
+Starting MDC - Movie Data Capture
+Input directory: /home/user/videos
+Output directory: /home/user/organized
+
+Scanning for video files...
+Found 3 video files
+
+[1/3] Processing: HHHHH-180.mp4
+  📋 Code: HHHHH-180
+  ✅ Found movie data: Movie Title
+  📄 Created NFO file
+  🖼️  Downloaded cover image
+  📁 Moved video file to: /home/user/organized/HHHHH-180/HHHHH-180.mp4
+
+[2/3] Processing: random_video.mp4
+  ⚠️  No code found in filename, skipping
+
+[3/3] Processing: ABCD-123.mkv
+  📋 Code: ABCD-123
+  ✅ Found movie data: Another Movie Title
+  📄 Created NFO file
+  🖼️  Downloaded cover image
+  📁 Moved video file to: /home/user/organized/ABCD-123/SSIS-123.mkv
+
+Processing complete!
+```
