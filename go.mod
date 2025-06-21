@@ -1,8 +1,8 @@
 module github.com/gitsang/capture
 
-go 1.24.1
+go 1.24.2
 
-toolchain go1.24.4
+toolchain go1.24.2
 
 require github.com/RPbro/javdbapi v0.0.8
 
