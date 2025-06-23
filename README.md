@@ -17,16 +17,54 @@ A command-line tool that scans directories for video files, extracts movie codes
 
 ### 2.1 Prerequisites
 
-- Go 1.24.2 or later
 - Internet connection for fetching metadata and cover images
 
-### 2.2 Build from Source
+### 2.2 Download Pre-built Binaries
+
+Download the latest release for your platform from the [Releases page](https://github.com/gitsang/capture/releases):
+
+- **Linux AMD64**: `capture-linux-amd64.tar.gz`
+- **Linux ARM64**: `capture-linux-arm64.tar.gz`
+- **macOS AMD64**: `capture-darwin-amd64.tar.gz`
+- **macOS ARM64**: `capture-darwin-arm64.tar.gz` (Apple Silicon)
+- **Windows AMD64**: `capture-windows-amd64.zip`
+- **Windows ARM64**: `capture-windows-arm64.zip`
+
+Extract the archive and run the binary:
 
 ```bash
-git clone <repository-url>
+# Linux/macOS
+tar -xzf capture-linux-amd64.tar.gz
+chmod +x capture-linux-amd64
+./capture-linux-amd64
+
+# Windows
+# Extract capture-windows-amd64.zip and run capture-windows-amd64.exe
+```
+
+### 2.3 Build from Source
+
+If you prefer to build from source:
+
+- Go 1.24.2 or later required
+
+```bash
+git clone https://github.com/gitsang/capture.git
 cd capture
 go mod tidy
 go build -o capture
+```
+
+### 2.4 Verify Downloads (Optional)
+
+Each release includes SHA256 checksums for verification:
+
+```bash
+# Download the checksum file
+wget https://github.com/gitsang/capture/releases/download/v1.0.0/capture-linux-amd64.tar.gz.sha256
+
+# Verify the download
+sha256sum -c capture-linux-amd64.tar.gz.sha256
 ```
 
 ## 3. Usage

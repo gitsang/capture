@@ -1,0 +1,100 @@
+name: Build and Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ""
+          - goos: linux
+            goarch: arm64
+            suffix: ""
+          - goos: darwin
+            goarch: amd64
+            suffix: ""
+          - goos: darwin
+            goarch: arm64
+            suffix: ""
+          - goos: windows
+            goarch: amd64
+            suffix: ".exe"
+          - goos: windows
+            goarch: arm64
+            suffix: ".exe"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.2'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Build binary
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        mkdir -p dist
+        go build -ldflags="-s -w" -o dist/capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} .
+
+    - name: Create archive
+      run: |
+        cd dist
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          zip capture-${{ matrix.goos }}-${{ matrix.goarch }}.zip capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+        else
+          tar -czf capture-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+        fi
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix == '.exe' && '.zip' || '.tar.gz' }}
+        asset_name: capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix == '.exe' && '.zip' || '.tar.gz' }}
+        asset_content_type: ${{ matrix.suffix == '.exe' && 'application/zip' || 'application/gzip' }}
+
+    - name: Generate checksum
+      run: |
+        cd dist
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          sha256sum capture-${{ matrix.goos }}-${{ matrix.goarch }}.zip > capture-${{ matrix.goos }}-${{ matrix.goarch }}.zip.sha256
+        else
+          sha256sum capture-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > capture-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+        fi
+
+    - name: Upload checksum
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix == '.exe' && '.zip.sha256' || '.tar.gz.sha256' }}
+        asset_name: capture-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix == '.exe' && '.zip.sha256' || '.tar.gz.sha256' }}
+        asset_content_type: text/plain
