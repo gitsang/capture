@@ -52,12 +52,12 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "mdc",
-	Short: "Movie Data Capture - Organize video files with metadata",
-	Long: `MDC is a command-line tool that scans directories for video files,
+	Use:   "capture",
+	Short: "Capture - Organize video files with metadata",
+	Long: `Capture is a command-line tool that scans directories for video files,
 extracts movie codes from filenames, fetches metadata, and organizes
 files into properly structured folders with NFO files and cover images.`,
-	Run: runMDC,
+	Run: runCapture,
 }
 
 func init() {
@@ -72,8 +72,8 @@ func main() {
 	}
 }
 
-func runMDC(cmd *cobra.Command, args []string) {
-	fmt.Printf("Starting MDC - Movie Data Capture\n")
+func runCapture(cmd *cobra.Command, args []string) {
+	fmt.Printf("Starting Capture\n")
 	fmt.Printf("Input directory: %s\n", inputDir)
 	fmt.Printf("Output directory: %s\n", outputDir)
 	fmt.Println()

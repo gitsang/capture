@@ -1,8 +1,8 @@
-# MDC - Movie Data Capture
+# Capture
 
 A command-line tool that scans directories for video files, extracts movie codes from filenames, fetches metadata, and organizes files into properly structured folders with NFO files and cover images.
 
-## Features
+## 1. Features
 
 - **Recursive Directory Scanning**: Scans input directory recursively for video files
 - **Video Format Support**: Supports mp4, mkv, wmv, avi video formats
@@ -13,50 +13,50 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
 - **File Management**: Renames and moves video files to organized folders
 
-## Installation
+## 2. Installation
 
-### Prerequisites
+### 2.1 Prerequisites
 
 - Go 1.24.2 or later
 - Internet connection for fetching metadata and cover images
 
-### Build from Source
+### 2.2 Build from Source
 
 ```bash
 git clone <repository-url>
 cd capture
 go mod tidy
-go build -o mdc
+go build -o capture
 ```
 
-## Usage
+## 3. Usage
 
-### Basic Usage
+### 3.1 Basic Usage
 
 ```bash
 # Scan current directory and organize to ./output
-./mdc
+./capture
 
 # Specify input and output directories
-./mdc -i /path/to/videos -o /path/to/organized
+./capture -i /path/to/videos -o /path/to/organized
 
 # Show help
-./mdc --help
+./capture --help
 ```
 
-### Command Line Options
+### 3.2 Command Line Options
 
 - `-i, --input`: Input directory to scan for video files (default: current directory)
 - `-o, --output`: Output directory for organized files (default: ./output)
 
-### Example
+### 3.3 Example
 
 ```bash
 # Organize videos from Downloads folder to Movies folder
-./mdc -i ~/Downloads -o ~/Movies
+./capture -i ~/Downloads -o ~/Movies
 ```
 
-## How It Works
+## 4. How It Works
 
 1. **Scanning**: Recursively scans the input directory for video files with supported extensions
 2. **Code Extraction**: Uses regex pattern `([A-Z]+-\d+)` to extract codes like "ABCD-180" from filenames
@@ -66,7 +66,7 @@ go build -o mdc
 6. **Image Download**: Downloads cover images as poster.jpg and fanart.jpg
 7. **File Moving**: Renames video files to match codes and moves them to respective folders
 
-## Output Structure
+## 5. Output Structure
 
 ```
 output/
@@ -82,9 +82,10 @@ output/
     └── fanart.jpg
 ```
 
-## NFO File Content
+## 6. NFO File Content
 
 The generated NFO files include:
+
 - Title and original title
 - Plot description with code and score
 - Year (extracted from publication date)
@@ -93,31 +94,32 @@ The generated NFO files include:
 - Unique ID (movie code)
 - Poster and fanart references
 
-## Supported Video Extensions
+## 7. Supported Video Extensions
 
 - `.mp4`
 - `.mkv`
 - `.wmv`
 - `.avi`
 
-## Code Pattern Recognition
+## 8. Code Pattern Recognition
 
 The tool recognizes movie codes in the following format:
+
 - Pattern: `[A-Z]+-\d+`
 - Examples: `ABCD-180`, `HHHHHH-123`, `XYZ-456`
 - Case insensitive in filename, but output folders are uppercase
 
-## Error Handling
+## 9. Error Handling
 
 - Skips files without recognizable codes
 - Continues processing other files if one fails
 - Provides detailed progress and error messages
 - Handles network timeouts for image downloads
 
-## Example Output
+## 10. Example Output
 
 ```
-Starting MDC - Movie Data Capture
+Starting capture - Video Capture
 Input directory: /home/user/videos
 Output directory: /home/user/organized
 
@@ -143,3 +145,4 @@ Found 3 video files
 
 Processing complete!
 ```
+
