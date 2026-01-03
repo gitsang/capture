@@ -66,10 +66,11 @@ func (c *Client) SearchByCode(code string) (*javdbapi.Item, error) {
 		return nil, errors.New("no results")
 	}
 
-	result := results[0]
-	if result.Code != code {
-		return nil, fmt.Errorf("expect code %s but found %s", code, result.Code)
+	for _, result := range results {
+		if result.Code == code {
+			return c.Get(result.Path)
+		}
 	}
 
-	return c.Get(result.Path)
+	return nil, fmt.Errorf("expect code %s but not found", code)
 }
