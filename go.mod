@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
-	github.com/RPbro/javdbapi v0.1.0
 	github.com/spf13/cobra v1.8.0
 )
 
