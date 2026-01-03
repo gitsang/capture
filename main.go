@@ -79,7 +79,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 	fmt.Println()
 
 	// Create output directory if it doesn't exist
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create output directory: %v\n", err)
 		return
 	}
@@ -119,7 +119,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 
 		// Create folder for the movie
 		movieFolder := filepath.Join(outputDir, strings.ToUpper(video.Code))
-		if err := os.MkdirAll(movieFolder, 0755); err != nil {
+		if err := os.MkdirAll(movieFolder, 0o755); err != nil {
 			fmt.Printf("  ❌ Failed to create movie folder: %v\n\n", err)
 			continue
 		}
@@ -132,7 +132,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 		}
 
 		// Download cover image
-		if err := downloadCoverImage(movieFolder, video.Code, movieData); err != nil {
+		if err := downloadCoverImage(movieFolder, movieData); err != nil {
 			fmt.Printf("  ⚠️  Failed to download cover image: %v\n", err)
 		} else {
 			fmt.Printf("  🖼️  Downloaded cover image\n")
@@ -201,7 +201,7 @@ func extractCodeFromFilename(filename string) string {
 	return ""
 }
 
-func createNFOFile(movieFolder, code string, movieData *javdbapi.JavDB) error {
+func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 	nfoPath := filepath.Join(movieFolder, code+".nfo")
 
 	// Extract year from pub_date
@@ -230,7 +230,7 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.JavDB) error {
 	}
 
 	// Add actresses as actors
-	for _, actress := range movieData.Actresses {
+	for _, actress := range movieData.Actors {
 		nfo.Actor = append(nfo.Actor, Actor{
 			Name: actress,
 			Role: "Actress",
@@ -247,10 +247,10 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.JavDB) error {
 	xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 %s`, string(xmlData))
 
-	return os.WriteFile(nfoPath, []byte(xmlContent), 0644)
+	return os.WriteFile(nfoPath, []byte(xmlContent), 0o644)
 }
 
-func downloadCoverImage(movieFolder, code string, movieData *javdbapi.JavDB) error {
+func downloadCoverImage(movieFolder string, movieData *javdbapi.Item) error {
 	if movieData.Cover == "" {
 		return fmt.Errorf("no cover image URL available")
 	}

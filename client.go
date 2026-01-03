@@ -27,7 +27,7 @@ func NewClient(optfs ...ClientOptionFunc) *Client {
 	return c
 }
 
-func (c *Client) Get(path string) (*javdbapi.JavDB, error) {
+func (c *Client) Get(path string) (*javdbapi.Item, error) {
 	result, err := c.GetFirst().
 		SetRaw("https://javdb.com" + path).First()
 	if err != nil {
@@ -37,7 +37,7 @@ func (c *Client) Get(path string) (*javdbapi.JavDB, error) {
 	return result, nil
 }
 
-func (c *Client) SearchByCode(code string) (*javdbapi.JavDB, error) {
+func (c *Client) SearchByCode(code string) (*javdbapi.Item, error) {
 	results, err := c.GetSearch().SetQuery(code).Get()
 	if err != nil {
 		return nil, err
