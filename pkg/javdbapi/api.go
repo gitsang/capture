@@ -226,6 +226,11 @@ func (a *API) First(link string) (*Item, error) {
 
 func (a *API) request(hc *http.Client, link string) (*goquery.Document, error) {
 	a.log("fetching: %s", link)
+	req, err := http.NewRequest(http.MethodGet, link, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := hc.Get(link)
 	if err != nil {
 		return nil, err
@@ -239,8 +244,8 @@ func (a *API) request(hc *http.Client, link string) (*goquery.Document, error) {
 }
 
 func (a *API) log(format string, v ...any) {
-	if !a.debug {
-		return
-	}
+	// if !a.debug {
+	// 	return
+	// }
 	log.Printf("[debug] "+format, v...)
 }
