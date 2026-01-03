@@ -231,7 +231,21 @@ func (a *API) request(hc *http.Client, link string) (*goquery.Document, error) {
 		return nil, err
 	}
 
-	resp, err := hc.Get(link)
+	req.Header.Set("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+	req.Header.Set("accept-language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,zh-TW;q=0.5")
+	req.Header.Set("cache-control", "max-age=0")
+	req.Header.Set("priority", "u=0, i")
+	req.Header.Set("sec-ch-ua", "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Microsoft Edge\";v=\"144\"")
+	req.Header.Set("sec-ch-ua-mobile", "?0")
+	req.Header.Set("sec-ch-ua-platform", "\"Windows\"")
+	req.Header.Set("sec-fetch-dest", "document")
+	req.Header.Set("sec-fetch-mode", "navigate")
+	req.Header.Set("sec-fetch-site", "none")
+	req.Header.Set("sec-fetch-user", "?1")
+	req.Header.Set("upgrade-insecure-requests", "1")
+	req.Header.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0")
+
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
