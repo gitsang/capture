@@ -1,7 +1,6 @@
 package javdbapi
 
 import (
-	"crypto/tls"
 	"log"
 	"math/rand"
 	"net/http"
@@ -128,7 +127,7 @@ func (a *API) Get(t any) ([]*Item, error) {
 	u = urlQuerySet(u, "locale", "zh")
 	u = urlQueryClean(u)
 
-	hc, err := a.newHttpClient()
+	hc := a.client.httpClient
 	if err != nil {
 		return nil, err
 	}
@@ -208,10 +207,7 @@ func (a *API) Get(t any) ([]*Item, error) {
 }
 
 func (a *API) First(link string) (*Item, error) {
-	hc, err := a.newHttpClient()
-	if err != nil {
-		return nil, err
-	}
+	hc := a.client.httpClient
 
 	item, err := a.fetchDetail(hc, link, nil)
 	if err != nil {
@@ -226,25 +222,6 @@ func (a *API) First(link string) (*Item, error) {
 	a.log("item %s: %v", link, item)
 
 	return item, nil
-}
-
-func (a *API) newHttpClient() (*http.Client, error) {
-	a.log("client: %+v", a.client)
-	hc := &http.Client{
-		Timeout: a.client.timeout,
-	}
-	if len(a.client.proxy) > 0 {
-		proxyURL, err := url.Parse(a.client.proxy)
-		if err != nil {
-			return nil, err
-		}
-		tr := &http.Transport{
-			Proxy:           http.ProxyURL(proxyURL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-		hc.Transport = tr
-	}
-	return hc, nil
 }
 
 func (a *API) request(hc *http.Client, link string) (*goquery.Document, error) {

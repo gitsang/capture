@@ -1,14 +1,16 @@
 package javdbapi
 
 import (
+	"net/http"
 	"time"
 )
 
 type Client struct {
-	domain  string
-	ua      string
-	timeout time.Duration
-	proxy   string
+	domain     string
+	ua         string
+	timeout    time.Duration
+	proxy      string
+	httpClient *http.Client
 }
 
 type option func(c *Client)
@@ -34,6 +36,12 @@ func WithTimeout(timeout time.Duration) func(c *Client) {
 func WithProxy(addr string) func(c *Client) {
 	return func(c *Client) {
 		c.proxy = addr
+	}
+}
+
+func WithHttpClient(client *http.Client) func(c *Client) {
+	return func(c *Client) {
+		c.httpClient = client
 	}
 }
 

@@ -16,7 +16,6 @@ type Client struct {
 type ClientOptionFunc func(*Client)
 
 func NewClient(optfs ...ClientOptionFunc) *Client {
-	// 创建自定义的 HTTP 客户端，跳过证书验证
 	httpCli := &http.Client{
 		Timeout: time.Second * 30,
 		Transport: &http.Transport{
@@ -25,14 +24,13 @@ func NewClient(optfs ...ClientOptionFunc) *Client {
 			},
 		},
 	}
-	_ = httpCli
 
 	c := &Client{
 		Client: javdbapi.NewClient(
 			javdbapi.WithDomain("https://javdb.com"),
 			javdbapi.WithUserAgent("Mozilla/5.0 (Macintosh; ..."),
 			javdbapi.WithTimeout(time.Second*30),
-			// javdbapi.WithHttpClient(httpCli),
+			javdbapi.WithHttpClient(httpCli),
 		),
 	}
 	for _, apply := range optfs {
