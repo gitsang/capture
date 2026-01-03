@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -67,7 +68,7 @@ func (c *Client) SearchByCode(code string) (*javdbapi.Item, error) {
 
 	result := results[0]
 	if result.Code != code {
-		return nil, errors.New("not found")
+		return nil, fmt.Errorf("expect code %s but found %s", code, result.Code)
 	}
 
 	return c.Get(result.Path)
