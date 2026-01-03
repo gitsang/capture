@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
+	"net/http"
 	"time"
 
-	"github.com/RPbro/javdbapi"
+	"github.com/gitsang/capture/pkg/javdbapi"
 )
 
 type Client struct {
@@ -14,11 +16,23 @@ type Client struct {
 type ClientOptionFunc func(*Client)
 
 func NewClient(optfs ...ClientOptionFunc) *Client {
+	// 创建自定义的 HTTP 客户端，跳过证书验证
+	httpCli := &http.Client{
+		Timeout: time.Second * 30,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+	_ = httpCli
+
 	c := &Client{
 		Client: javdbapi.NewClient(
 			javdbapi.WithDomain("https://javdb.com"),
 			javdbapi.WithUserAgent("Mozilla/5.0 (Macintosh; ..."),
 			javdbapi.WithTimeout(time.Second*30),
+			// javdbapi.WithHttpClient(httpCli),
 		),
 	}
 	for _, apply := range optfs {
@@ -28,7 +42,7 @@ func NewClient(optfs ...ClientOptionFunc) *Client {
 }
 
 func (c *Client) Get(path string) (*javdbapi.Item, error) {
-	result, err := c.GetFirst().
+	result, err := c.Client.GetFirst().
 		SetRaw("https://javdb.com" + path).First()
 	if err != nil {
 		return nil, err
@@ -38,7 +52,7 @@ func (c *Client) Get(path string) (*javdbapi.Item, error) {
 }
 
 func (c *Client) SearchByCode(code string) (*javdbapi.Item, error) {
-	results, err := c.GetSearch().SetQuery(code).Get()
+	results, err := c.Client.GetSearch().SetQuery(code).Get()
 	if err != nil {
 		return nil, err
 	}

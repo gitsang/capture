@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RPbro/javdbapi"
+	"github.com/gitsang/capture/pkg/javdbapi"
 	"github.com/spf13/cobra"
 )
 
