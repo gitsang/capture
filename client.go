@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gitsang/capture/pkg/javdbapi"
@@ -16,9 +17,14 @@ type Client struct {
 type ClientOptionFunc func(*Client)
 
 func NewClient(optfs ...ClientOptionFunc) *Client {
+	proxyURL, err := url.Parse("http://pi.xm1.c8g.top:7890")
+	if err != nil {
+		panic(err)
+	}
 	httpCli := &http.Client{
 		Timeout: time.Second * 30,
 		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},

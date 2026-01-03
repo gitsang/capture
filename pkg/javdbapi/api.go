@@ -1,6 +1,8 @@
 package javdbapi
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -249,11 +251,19 @@ func (a *API) request(hc *http.Client, link string) (*goquery.Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println(string(body))
+
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+
 	return doc, nil
 }
 
