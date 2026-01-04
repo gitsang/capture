@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -147,6 +148,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 			fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 		}
 
+		time.Sleep(10 * time.Second)
 		fmt.Println()
 	}
 
@@ -237,6 +239,9 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 			Role: "Actress",
 		})
 	}
+
+	nfoJsonBytes, _ := json.MarshalIndent(nfo, "", "  ")
+	fmt.Printf("NFO: %s\n", string(nfoJsonBytes))
 
 	// Marshal to XML
 	xmlData, err := xml.MarshalIndent(nfo, "", "    ")
