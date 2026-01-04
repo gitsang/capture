@@ -171,12 +171,20 @@ func runCapture(cmd *cobra.Command, args []string) {
 func scanVideoFiles(dir string) ([]VideoFile, error) {
 	var videoFiles []VideoFile
 
+	// Get absolute path for output directory comparison
+	outputAbs, _ := filepath.Abs(outputDir)
+
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
+		// Skip output directory and its subdirectories
 		if info.IsDir() {
+			dirAbs, _ := filepath.Abs(path)
+			if dirAbs == outputAbs {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
