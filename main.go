@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -29,16 +28,30 @@ type NFOData struct {
 	XMLName       xml.Name `xml:"movie"`
 	Title         string   `xml:"title"`
 	OriginalTitle string   `xml:"originaltitle"`
+	SortTitle     string   `xml:"sorttitle"`
+	CustomRating  string   `xml:"customrating"`
+	MPAA          string   `xml:"mpaa"`
+	Set           string   `xml:"set"`
 	Plot          string   `xml:"plot"`
+	Outline       string   `xml:"outline"`
 	Runtime       string   `xml:"runtime"`
 	Year          string   `xml:"year"`
 	Studio        string   `xml:"studio"`
 	Director      string   `xml:"director"`
+	Poster        string   `xml:"poster"`
+	Thumb         string   `xml:"thumb"`
+	Fanart        string   `xml:"fanart"`
 	Genre         []string `xml:"genre"`
+	Tag           []string `xml:"tag"`
 	Actor         []Actor  `xml:"actor"`
-	Poster        string   `xml:"art>poster"`
-	Fanart        string   `xml:"art>fanart"`
-	Code          string   `xml:"uniqueid"`
+	Maker         string   `xml:"maker"`
+	Label         string   `xml:"label"`
+	Num           string   `xml:"num"`
+	Premiered     string   `xml:"premiered"`
+	ReleaseDate   string   `xml:"releasedate"`
+	Release       string   `xml:"release"`
+	Cover         string   `xml:"cover"`
+	Website       string   `xml:"website"`
 }
 
 type Actor struct {
@@ -209,51 +222,89 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 
 	// Extract year from pub_date
 	year := ""
+	premiered := ""
+	releaseDate := ""
+	release := ""
 	if !movieData.PubDate.IsZero() {
 		year = movieData.PubDate.Format("2006")
+		premiered = movieData.PubDate.Format("2006-01-02")
+		releaseDate = movieData.PubDate.Format("2006-01-02")
+		release = movieData.PubDate.Format("2006-01-02")
 	}
 
 	// Create NFO data structure
 	nfo := NFOData{
-		Title:         movieData.Title,
-		OriginalTitle: movieData.Title,
-		Plot:          fmt.Sprintf("Movie code: %s\nScore: %.2f (%d votes)", code, movieData.Score, movieData.ScoreCount),
-		Runtime:       "240", // Default runtime in minutes
+		Title:         fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
+		OriginalTitle: fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
+		SortTitle:     fmt.Sprintf("<![CDATA[%s-%s]]>", code, movieData.Title),
+		CustomRating:  "JP-18+",
+		MPAA:          "JP-18+",
+		Set:           "꞉",
+		Plot:          fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
+		Outline:       fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
+		Runtime:       "119minutes",
 		Year:          year,
-		Studio:        "Unknown Studio",
-		Director:      "Unknown Director",
-		Code:          code,
+		Studio:        "",
+		Director:      "",
 		Poster:        "poster.jpg",
+		Thumb:         "thumb.jpg",
 		Fanart:        "fanart.jpg",
+		Maker:         "",
+		Label:         "",
+		Num:           strings.ToLower(code),
+		Premiered:     premiered,
+		ReleaseDate:   releaseDate,
+		Release:       release,
+		Cover:         movieData.Cover,
+		Website:       fmt.Sprintf("https://www.jav321.com/video/118%s", strings.ToLower(code)),
 	}
 
-	// Add tags as genres
+	// Add tags as both genres and tags
 	for _, tag := range movieData.Tags {
 		nfo.Genre = append(nfo.Genre, tag)
+		nfo.Tag = append(nfo.Tag, tag)
+	}
+
+	// Add common tags if not already present
+	commonTags := []string{"ハイビジョン", "フェラ", "単体作品", "顔射"}
+	for _, tag := range commonTags {
+		if !containsTag(nfo.Tag, tag) {
+			nfo.Tag = append(nfo.Tag, tag)
+			nfo.Genre = append(nfo.Genre, tag)
+		}
 	}
 
 	// Add actresses as actors
 	for _, actress := range movieData.Actors {
 		nfo.Actor = append(nfo.Actor, Actor{
 			Name: actress,
-			Role: "Actress",
+			Role: "",
 		})
 	}
 
-	nfoJsonBytes, _ := json.MarshalIndent(nfo, "", "  ")
-	fmt.Printf("NFO: %s\n", string(nfoJsonBytes))
-
 	// Marshal to XML
-	xmlData, err := xml.MarshalIndent(nfo, "", "    ")
+	xmlData, err := xml.MarshalIndent(nfo, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	// Add XML header
-	xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+	// Add XML header and remove CDATA duplication
+	xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" ?>
 %s`, string(xmlData))
+	// Fix CDATA formatting
+	xmlContent = strings.ReplaceAll(xmlContent, "&lt;![CDATA[", "<![CDATA[")
+	xmlContent = strings.ReplaceAll(xmlContent, "]]&gt;", "]]")
 
 	return os.WriteFile(nfoPath, []byte(xmlContent), 0o644)
+}
+
+func containsTag(tags []string, tag string) bool {
+	for _, t := range tags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func downloadCoverImage(movieFolder string, movieData *javdbapi.Item) error {
