@@ -114,7 +114,13 @@ func runCapture(cmd *cobra.Command, args []string) {
 	client := NewClient()
 
 	// Process each video file
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for i, video := range videoFiles {
+		<-ticker.C
+		log.Printf("Sleeping for 5 seconds before processing next file...")
+		time.Sleep(5 * time.Second)
+
 		fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(videoFiles), video.Filename)
 
 		if video.Code == "" {
@@ -143,6 +149,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 		// Generate NFO file
 		if err := createNFOFile(movieFolder, video.Code, movieData); err != nil {
 			fmt.Printf("  ⚠️  Failed to create NFO file: %v\n", err)
+			continue
 		} else {
 			fmt.Printf("  📄 Created NFO file\n")
 		}
@@ -150,6 +157,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 		// Download cover image
 		if err := downloadCoverImage(movieFolder, movieData); err != nil {
 			fmt.Printf("  ⚠️  Failed to download cover image: %v\n", err)
+			continue
 		} else {
 			fmt.Printf("  🖼️  Downloaded cover image\n")
 		}
@@ -158,12 +166,11 @@ func runCapture(cmd *cobra.Command, args []string) {
 		newVideoPath := filepath.Join(movieFolder, strings.ToUpper(video.Code)+filepath.Ext(video.Path))
 		if err := moveFile(video.Path, newVideoPath); err != nil {
 			fmt.Printf("  ❌ Failed to move video file: %v\n", err)
+			_ = os.RemoveAll(movieFolder)
 		} else {
 			fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 		}
 
-		log.Printf("Sleeping for 10 seconds before processing next file...")
-		time.Sleep(10 * time.Second)
 		fmt.Println()
 	}
 
