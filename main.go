@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -161,6 +162,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 			fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 		}
 
+		log.Printf("Sleeping for 10 seconds before processing next file...")
 		time.Sleep(10 * time.Second)
 		fmt.Println()
 	}
@@ -281,6 +283,9 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 	// Fix CDATA formatting
 	xmlContent = strings.ReplaceAll(xmlContent, "&lt;![CDATA[", "<![CDATA[")
 	xmlContent = strings.ReplaceAll(xmlContent, "]]&gt;", "]]")
+
+	// Convert to DOS file format (\r\n)
+	xmlContent = strings.ReplaceAll(xmlContent, "\n", "\r\n")
 
 	return os.WriteFile(nfoPath, []byte(xmlContent), 0o644)
 }
