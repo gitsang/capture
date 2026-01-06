@@ -228,22 +228,10 @@ func extractCodeFromFilename(filename string) string {
 func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 	nfoPath := filepath.Join(movieFolder, code+".nfo")
 
-	// Extract year from pub_date
-	year := ""
-	premiered := ""
-	releaseDate := ""
-	release := ""
-	if !movieData.PubDate.IsZero() {
-		year = movieData.PubDate.Format("2006")
-		premiered = movieData.PubDate.Format("2006-01-02")
-		releaseDate = movieData.PubDate.Format("2006-01-02")
-		release = movieData.PubDate.Format("2006-01-02")
-	}
-
 	// Create NFO data structure
 	nfo := NFOData{
-		Title:         fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
-		OriginalTitle: fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
+		Title:         fmt.Sprintf("<![CDATA[%s-%s]]>", code, movieData.Title),
+		OriginalTitle: fmt.Sprintf("<![CDATA[%s-%s]]>", code, movieData.Title),
 		SortTitle:     fmt.Sprintf("<![CDATA[%s-%s]]>", code, movieData.Title),
 		CustomRating:  "JP-18+",
 		MPAA:          "JP-18+",
@@ -251,7 +239,7 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 		Plot:          fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
 		Outline:       fmt.Sprintf("<![CDATA[%s]]>", movieData.Title),
 		Runtime:       "119minutes",
-		Year:          year,
+		Year:          movieData.PubDate.Format("2006"),
 		Studio:        "",
 		Director:      "",
 		Poster:        "poster.jpg",
@@ -260,26 +248,17 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 		Maker:         "",
 		Label:         "",
 		Num:           strings.ToLower(code),
-		Premiered:     premiered,
-		ReleaseDate:   releaseDate,
-		Release:       release,
+		Premiered:     movieData.PubDate.Format("2006-01-02"),
+		ReleaseDate:   movieData.PubDate.Format("2006-01-02"),
+		Release:       movieData.PubDate.Format("2006-01-02"),
 		Cover:         movieData.Cover,
-		Website:       fmt.Sprintf("https://www.jav321.com/video/118%s", strings.ToLower(code)),
+		Website:       fmt.Sprintf("https://www.javdatabase.com/movies/%s", strings.ToLower(code)),
 	}
 
 	// Add tags as both genres and tags
 	for _, tag := range movieData.Tags {
 		nfo.Genre = append(nfo.Genre, tag)
 		nfo.Tag = append(nfo.Tag, tag)
-	}
-
-	// Add common tags if not already present
-	commonTags := []string{"ハイビジョン", "フェラ", "単体作品", "顔射"}
-	for _, tag := range commonTags {
-		if !containsTag(nfo.Tag, tag) {
-			nfo.Tag = append(nfo.Tag, tag)
-			nfo.Genre = append(nfo.Genre, tag)
-		}
 	}
 
 	// Add actresses as actors
@@ -306,15 +285,6 @@ func createNFOFile(movieFolder, code string, movieData *javdbapi.Item) error {
 	return os.WriteFile(nfoPath, []byte(xmlContent), 0o644)
 }
 
-func containsTag(tags []string, tag string) bool {
-	for _, t := range tags {
-		if t == tag {
-			return true
-		}
-	}
-	return false
-}
-
 func downloadCoverImage(movieFolder string, movieData *javdbapi.Item) error {
 	if movieData.Cover == "" {
 		return fmt.Errorf("no cover image URL available")
@@ -326,10 +296,29 @@ func downloadCoverImage(movieFolder string, movieData *javdbapi.Item) error {
 		return fmt.Errorf("failed to download poster: %v", err)
 	}
 
-	// Download fanart (use cover as fanart if no separate fanart available)
+	// Download fanart
 	fanartPath := filepath.Join(movieFolder, "fanart.jpg")
 	if err := downloadImage(movieData.Cover, fanartPath); err != nil {
 		return fmt.Errorf("failed to download fanart: %v", err)
+	}
+
+	// Download thumb
+	thumbPath := filepath.Join(movieFolder, "thumb.jpg")
+	if err := downloadImage(movieData.Cover, thumbPath); err != nil {
+		return fmt.Errorf("failed to download thumb: %v", err)
+	}
+
+	// Download extra fanart
+	extrafanartFolder := filepath.Join(movieFolder, "extrafanart")
+	err := os.MkdirAll(extrafanartFolder, 0o755)
+	if err != nil {
+		return err
+	}
+	for idx, url := range movieData.Pics {
+		extrafanartPath := filepath.Join(extrafanartFolder, fmt.Sprintf("extrafanart-%d.jpg", idx))
+		if err := downloadImage(url, extrafanartPath); err != nil {
+			continue
+		}
 	}
 
 	return nil
