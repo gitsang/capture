@@ -321,3 +321,40 @@ func TestParseFixTargets(t *testing.T) {
 		t.Fatal("unknown target must error")
 	}
 }
+
+// TestQuarantineFailed checks failed sources are moved to {output}/failed
+// with the original name, collisions get a suffix, and rescans skip them.
+func TestQuarantineFailed(t *testing.T) {
+	base := t.TempDir()
+	in := filepath.Join(base, "in")
+	out := filepath.Join(base, "out")
+	os.MkdirAll(in, 0755)
+
+	src := filepath.Join(in, "AIFOCS-004.mp4")
+	os.WriteFile(src, []byte("v"), 0644)
+	quarantineFailed(out, VideoFile{Path: src, Filename: "AIFOCS-004.mp4", Code: "AIFOCS-004"})
+
+	dst := filepath.Join(out, "failed", "AIFOCS-004.mp4")
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("failed file missing: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("source should be moved away")
+	}
+
+	// collision: second file with same name gets -1 suffix
+	os.WriteFile(src, []byte("v2"), 0644)
+	quarantineFailed(out, VideoFile{Path: src, Filename: "AIFOCS-004.mp4", Code: "AIFOCS-004"})
+	if _, err := os.Stat(filepath.Join(out, "failed", "AIFOCS-004-1.mp4")); err != nil {
+		t.Fatalf("collision suffix missing: %v", err)
+	}
+
+	// scanning the whole base dir skips the output tree incl. failed/
+	files, err := scanVideoFiles(base, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("rescan found %d files, want 0 (failed/ must be skipped)", len(files))
+	}
+}

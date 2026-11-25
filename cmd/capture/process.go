@@ -91,6 +91,7 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 		d, err := api.SearchByCode(ctx, video.Code)
 		if err != nil {
 			fmt.Printf("  ❌ Failed to fetch movie data: %v\n", err)
+			quarantineFailed(outputDir, video)
 			return
 		}
 		detail = d
@@ -151,9 +152,39 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 		}
 	} else if err := moveFile(video.Path, newVideoPath); err != nil {
 		fmt.Printf("  ❌ Failed to move video file: %v\n", err)
+		quarantineFailed(outputDir, video)
 	} else {
 		fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 	}
+}
+
+// quarantineFailed moves an unprocessable source file to {output}/failed/
+// (original filename kept) so later runs do not retry it. The output tree
+// is skipped by the scanner, so failed files stay out of the work list.
+// To retry them later, move them back into the input directory.
+func quarantineFailed(outputDir string, video VideoFile) {
+	failedDir := filepath.Join(outputDir, "failed")
+	if err := os.MkdirAll(failedDir, 0755); err != nil {
+		fmt.Printf("  ⚠️  Failed to create failed dir: %v\n", err)
+		return
+	}
+	dst := filepath.Join(failedDir, video.Filename)
+	if _, err := os.Stat(dst); err == nil {
+		// Same name already quarantined: keep both by suffixing.
+		ext := filepath.Ext(video.Filename)
+		base := strings.TrimSuffix(video.Filename, ext)
+		for i := 1; ; i++ {
+			dst = filepath.Join(failedDir, fmt.Sprintf("%s-%d%s", base, i, ext))
+			if _, err := os.Stat(dst); err != nil {
+				break
+			}
+		}
+	}
+	if err := moveFile(video.Path, dst); err != nil {
+		fmt.Printf("  ⚠️  Failed to move to failed dir: %v\n", err)
+		return
+	}
+	fmt.Printf("  🚫 Moved to failed dir (will be skipped on future runs): %s\n", dst)
 }
 
 // createIndexSymlink links {output}/{kind}/{name}/{CODE} -> movieFolder.

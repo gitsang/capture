@@ -40,7 +40,8 @@ Output layout:
                                 + thumb.jpg + extrafanart/extrafanart-N.jpg
   {output}/actor/<name>/CODE    symlink to the video folder
   {output}/tag/<name>/CODE      symlink to the video folder
-  {output}/fullname/CODE Title  symlink to the video folder`,
+  {output}/fullname/CODE Title  symlink to the video folder
+  {output}/failed/<original name>   sources that could not be processed`,
 	Run: runCapture,
 }
 

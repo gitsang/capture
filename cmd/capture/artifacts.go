@@ -322,7 +322,7 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 				continue
 			}
 			switch e.Name() {
-			case "video", "actor", "tag", "fullname":
+			case "video", "actor", "tag", "fullname", "failed":
 				continue
 			}
 			if strings.Contains(e.Name(), "-") || strings.Contains(e.Name(), "FC2") {

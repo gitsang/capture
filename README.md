@@ -13,7 +13,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
-- **File Management**: Renames and moves video files to organized folders
+- **File Management**: Renames and moves video files to organized folders; sources that cannot be scraped (no exact match, network error, move failure) are parked in `{output}/failed/` so later runs skip them
 
 ## 2. Installation
 
