@@ -18,6 +18,8 @@ var (
 	outputDir     string
 	cacheDir      string
 	force         bool
+	fix           bool
+	fixOnline     bool
 	proxyURL      string
 	insecure      bool
 	cookie        string
@@ -37,7 +39,8 @@ Output layout:
   {output}/video/CODE/          video + CODE.nfo + poster.jpg + fanart.jpg
                                 + thumb.jpg + extrafanart/extrafanart-N.jpg
   {output}/actor/<name>/CODE    symlink to the video folder
-  {output}/tag/<name>/CODE      symlink to the video folder`,
+  {output}/tag/<name>/CODE      symlink to the video folder
+  {output}/fullname/CODE Title  symlink to the video folder`,
 	Run: runCapture,
 }
 
@@ -46,6 +49,8 @@ func init() {
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
 	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
 	rootCmd.Flags().BoolVar(&force, "force", false, "Ignore cached results and re-scrape")
+	rootCmd.Flags().BoolVar(&fix, "fix", false, "Repair the output directory instead of scanning input (NFO/images/symlinks, portrait poster)")
+	rootCmd.Flags().BoolVar(&fixOnline, "fix-online", false, "With --fix: allow network access to re-scrape missing cache entries and re-download missing images")
 	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
 	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
 	rootCmd.Flags().StringVar(&cookie, "cookie", "", "Cookie header for javdb.com from a logged-in browser session (e.g. \"_jdb_session=...\")")
@@ -80,6 +85,17 @@ func runCapture(cmd *cobra.Command, args []string) {
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create output directory: %v\n", err)
+		return
+	}
+
+	// --fix: repair the output tree, never scan input.
+	if fix {
+		api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure, cookie)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
+			return
+		}
+		fixOutput(ctx, api, cache.New(cacheDir), outputDir, fixOnline)
 		return
 	}
 	absOutput, err := filepath.Abs(outputDir)

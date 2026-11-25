@@ -9,7 +9,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
 - **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
-- **Caching**: Caches successful scrapes per code under `/tmp/capture` — metadata in `{CODE}.json`, images as raw files in `{CODE}/` (poster.jpg, extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
+- **Caching**: Caches successful scrapes per code under `/tmp/capture` — everything per code in one folder `{CODE}/` ({CODE}.json metadata + raw poster.jpg/extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
@@ -90,6 +90,8 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `-o, --output`: Output directory for organized files (default: ./output)
 - `--cache-dir`: Directory for cached scrape results, one JSON file per code (default: /tmp/capture)
 - `--force`: Ignore cached results and re-scrape
+- `--fix`: Repair the output directory instead of scanning input — rebuilds missing actor/tag/fullname symlinks, restores broken NFO/images from cache, and re-crops landscape posters to portrait
+- `--fix-online`: With `--fix`, allow network access to re-scrape codes missing from cache and re-download missing images
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
 - `--cookie`: Cookie header from a logged-in javdb browser session (e.g. `"_jdb_session=..."`), attached to javdb.com requests only. Some detail pages require login; copy the cookie from your browser's DevTools (Application → Cookies → javdb.com)
@@ -124,9 +126,9 @@ output/
 │   ├── ABCD-180/
 │   │   ├── ABCD-180.mp4      # Renamed video file
 │   │   ├── ABCD-180.nfo      # Movie metadata
-│   │   ├── poster.jpg        # Cover image
-│   │   ├── fanart.jpg        # Fanart image
-│   │   ├── thumb.jpg         # Thumbnail (same cover)
+│   │   ├── poster.jpg        # Portrait poster (right 52.7% crop of cover)
+│   │   ├── fanart.jpg        # Full landscape cover
+│   │   ├── thumb.jpg         # Thumbnail (same full cover)
 │   │   └── extrafanart/      # Screenshots
 │   │       ├── extrafanart-0.jpg
 │   │       └── ...

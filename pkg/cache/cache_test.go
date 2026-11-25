@@ -35,7 +35,7 @@ func TestStoreRawAndLegacyLoad(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "ABF-004", "extrafanart-1.jpg")); err == nil {
 		t.Fatal("nil slot should not be written")
 	}
-	j, _ := os.ReadFile(filepath.Join(dir, "ABF-004.json"))
+	j, _ := os.ReadFile(filepath.Join(dir, "ABF-004", "ABF-004.json"))
 	if len(j) > 4096 {
 		t.Fatalf("JSON should be metadata-only, got %d bytes", len(j))
 	}
@@ -44,7 +44,7 @@ func TestStoreRawAndLegacyLoad(t *testing.T) {
 		t.Fatal("new-style load failed")
 	}
 
-	// legacy-style: images embedded in JSON, no raw files
+	// legacy-style: flat {CODE}.json with images embedded, no raw files
 	legacy := &CacheEntry{CachedAt: time.Now(), Detail: &d, Poster: png, ExtraFanart: [][]byte{png, png}}
 	lj, _ := json.Marshal(legacy)
 	os.WriteFile(filepath.Join(dir, "OLD-001.json"), lj, 0644)
@@ -53,4 +53,3 @@ func TestStoreRawAndLegacyLoad(t *testing.T) {
 		t.Fatal("legacy load failed")
 	}
 }
-

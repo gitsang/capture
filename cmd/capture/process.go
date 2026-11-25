@@ -71,9 +71,6 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	fmt.Printf("  📋 Code: %s\n", video.Code)
 
 	movieFolder := filepath.Join(outputDir, "video", video.Code)
-	nfoPath := filepath.Join(movieFolder, video.Code+".nfo")
-	posterPath := filepath.Join(movieFolder, "poster.jpg")
-	fanartPath := filepath.Join(movieFolder, "fanart.jpg")
 	newVideoPath := filepath.Join(movieFolder, video.Code+strings.ToLower(filepath.Ext(video.Path)))
 
 	// 1. Get metadata: cache first (unless --force), then live scrape.
@@ -137,83 +134,8 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 		}
 	}
 
-	// 2. Create the movie folder.
-	if err := os.MkdirAll(movieFolder, 0755); err != nil {
-		fmt.Printf("  ❌ Failed to create movie folder: %v\n", err)
-		return
-	}
-
-	// 3. NFO: regenerate when missing or incomplete.
-	if cache.ValidNFOFile(nfoPath) {
-		fmt.Printf("  📄 NFO already complete\n")
-	} else if err := createNFOFile(nfoPath, video.Code, detail); err != nil {
-		fmt.Printf("  ⚠️  Failed to create NFO file: %v\n", err)
-	} else {
-		fmt.Printf("  📄 Created NFO file\n")
-	}
-
-	// 4. Images: verify on-disk completeness; re-materialize from cached
-	//    bytes or re-download when truncated/corrupt/missing.
-	for _, img := range []struct{ name, path string }{
-		{"poster", posterPath},
-		{"fanart", fanartPath},
-		{"thumb", filepath.Join(movieFolder, "thumb.jpg")},
-	} {
-		if cache.ValidImageFile(img.path) {
-			fmt.Printf("  🖼️  %s.jpg already complete\n", img.name)
-			continue
-		}
-		if cache.ValidImage(poster) {
-			if err := os.WriteFile(img.path, poster, 0644); err != nil {
-				fmt.Printf("  ⚠️  Failed to write %s.jpg: %v\n", img.name, err)
-			} else {
-				fmt.Printf("  🖼️  Restored %s.jpg from cache\n", img.name)
-			}
-			continue
-		}
-		if url := detail.Summary.CoverURL; url != "" {
-			if err := api.DownloadImage(ctx, url, img.path, retryBase, retryAttempts); err != nil {
-				fmt.Printf("  ⚠️  Failed to download %s.jpg: %v\n", img.name, err)
-			} else {
-				fmt.Printf("  🖼️  Downloaded %s.jpg\n", img.name)
-			}
-		} else {
-			fmt.Printf("  ⚠️  No cover URL for %s.jpg\n", img.name)
-		}
-	}
-
-	// 4b. Extrafanart: one file per screenshot, verified/repaired like the rest.
-	if len(detail.Screenshots) > 0 || len(extraFanart) > 0 {
-		extraDir := filepath.Join(movieFolder, "extrafanart")
-		if err := os.MkdirAll(extraDir, 0755); err != nil {
-			fmt.Printf("  ⚠️  Failed to create extrafanart dir: %v\n", err)
-		} else {
-			restored, downloaded := 0, 0
-			for i, shot := range detail.Screenshots {
-				p := filepath.Join(extraDir, fmt.Sprintf("extrafanart-%d.jpg", i))
-				if cache.ValidImageFile(p) {
-					continue
-				}
-				if i < len(extraFanart) && cache.ValidImage(extraFanart[i]) {
-					if err := os.WriteFile(p, extraFanart[i], 0644); err == nil {
-						restored++
-						continue
-					}
-				}
-				if shot.FullURL == "" {
-					continue
-				}
-				if err := api.DownloadImage(ctx, shot.FullURL, p, retryBase, retryAttempts); err != nil {
-					fmt.Printf("  ⚠️  Failed to download extrafanart-%d: %v\n", i, err)
-				} else {
-					downloaded++
-				}
-			}
-			if restored+downloaded > 0 {
-				fmt.Printf("  🖼️  extrafanart: %d restored from cache, %d downloaded\n", restored, downloaded)
-			}
-		}
-	}
+	// 2-4b. Materialize NFO + artwork (shared with --fix).
+	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, true)
 
 	// 5. Move the video file. When the target already exists (cached rerun,
 	// duplicate source), remove the redundant source so it is not rescanned.
@@ -232,20 +154,6 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	} else {
 		fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 	}
-
-	// 6. Symlinks for every actor and tag.
-	linkCount := 0
-	for _, actor := range detail.Actors {
-		if createIndexSymlink(outputDir, "actor", actor.Name, video.Code, movieFolder) {
-			linkCount++
-		}
-	}
-	for _, tag := range detail.Tags {
-		if createIndexSymlink(outputDir, "tag", tag.Name, video.Code, movieFolder) {
-			linkCount++
-		}
-	}
-	fmt.Printf("  🔗 %d actor/tag symlinks created/updated\n", linkCount)
 }
 
 // createIndexSymlink links {output}/{kind}/{name}/{CODE} -> movieFolder.
@@ -256,14 +164,69 @@ func createIndexSymlink(outputDir, kind, name, movieCode, movieFolder string) bo
 		return false
 	}
 	dir := filepath.Join(outputDir, kind, name)
+	return linkDir(dir, movieCode, movieFolder, kind)
+}
+
+// createFullnameSymlink links {output}/fullname/{CODE} {title} -> ../video/CODE.
+// When the title changes, stale links for the same code are replaced.
+func createFullnameSymlink(outputDir, movieCode, title, movieFolder string) bool {
+	title = cache.SanitizeName(title)
+	if title == "" {
+		return false
+	}
+	dir := filepath.Join(outputDir, "fullname")
+	name := fullnameEntryName(movieCode, title)
+
+	// Remove stale "{CODE} ..." links whose title changed (or old plain-CODE link).
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			old := e.Name()
+			if old == name {
+				continue
+			}
+			if old == movieCode || strings.HasPrefix(old, movieCode+" ") {
+				p := filepath.Join(dir, old)
+				if _, err := os.Readlink(p); err == nil {
+					os.Remove(p)
+				}
+			}
+		}
+	}
+	return linkDir(dir, name, movieFolder, "fullname")
+}
+
+// fullnameEntryName builds "{CODE} {title}", truncating the title so the
+// whole entry stays within the 255-byte filesystem limit (Japanese titles
+// are 3 bytes per rune in UTF-8 and can exceed it).
+func fullnameEntryName(movieCode, title string) string {
+	const maxBytes = 255
+	name := movieCode + " " + title
+	if len(name) <= maxBytes {
+		return name
+	}
+	budget := maxBytes - len(movieCode) - 1 // space
+	if budget <= 0 {
+		return movieCode
+	}
+	// Cut on rune boundaries so we never split a UTF-8 sequence.
+	runes := []rune(title)
+	for len(string(runes)) > budget {
+		runes = runes[:len(runes)-1]
+	}
+	return movieCode + " " + string(runes)
+}
+
+// linkDir creates {dir}/{name} as a relative symlink to movieFolder.
+// Returns true when a new link was created.
+func linkDir(dir, name, movieFolder, kind string) bool {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Printf("  ⚠️  Failed to create %s dir %s: %v\n", kind, dir, err)
 		return false
 	}
-	link := filepath.Join(dir, movieCode)
+	link := filepath.Join(dir, name)
 
-	// Relative target: {output}/{kind}/{name}/CODE -> ../../video/CODE,
-	// so the whole output tree can be moved/renamed without breaking links.
+	// Relative target (e.g. ../../video/CODE or ../video/CODE), so the whole
+	// output tree can be moved/renamed without breaking links.
 	relTarget, err := filepath.Rel(dir, movieFolder)
 	if err != nil {
 		relTarget = movieFolder

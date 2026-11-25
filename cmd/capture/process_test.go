@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/gitsang/capture/pkg/cache"
 	"github.com/gitsang/capture/pkg/client"
+	"github.com/gitsang/capture/pkg/imageutil"
 )
 
 // tiny valid 1x1 PNG
@@ -132,6 +136,33 @@ func TestProcessVideoCacheFlow(t *testing.T) {
 		t.Errorf("symlink target = %q, want relative ../../video/FC2-PPV-1234567", tgt)
 	}
 
+	// fullname index: {output}/fullname/{CODE} {title} -> ../video/CODE
+	fnLink := filepath.Join(out, "fullname", "ABF-004 \u30c6\u30b9\u30c8\u30bf\u30a4\u30c8\u30eb")
+	ftgt, err := os.Readlink(fnLink)
+	if err != nil {
+		t.Fatalf("fullname symlink missing: %v", err)
+	}
+	if ftgt != filepath.Join("..", "video", "ABF-004") {
+		t.Errorf("fullname target = %q, want ../video/ABF-004", ftgt)
+	}
+	// title change: old fullname link replaced, exactly one link for the code
+	if createFullnameSymlink(out, "ABF-004", "\u65b0\u30bf\u30a4\u30c8\u30eb", filepath.Join(out, "video", "ABF-004")) != true {
+		t.Error("title-change link not created")
+	}
+	if _, err := os.Lstat(fnLink); !os.IsNotExist(err) {
+		t.Error("stale fullname link not removed")
+	}
+	entries, _ := os.ReadDir(filepath.Join(out, "fullname"))
+	count := 0
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "ABF-004") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("fullname links for ABF-004 = %d, want 1", count)
+	}
+
 	// corrupt poster + truncate NFO, rerun: both must be repaired from cache
 	posterPath := filepath.Join(out, "video", "ABF-004", "poster.jpg")
 	os.WriteFile(posterPath, png[:10], 0644)
@@ -184,4 +215,69 @@ func TestValidImage(t *testing.T) {
 	if cache.ValidImage(nil) {
 		t.Error("nil accepted as image")
 	}
+}
+
+// TestFixOutput repairs a damaged output tree offline from cache:
+// missing symlinks, truncated NFO/images, landscape poster.
+func TestFixOutput(t *testing.T) {
+	base := t.TempDir()
+	out := filepath.Join(base, "out")
+	cacheDir := filepath.Join(base, "cache")
+
+	// landscape 100x60 JPEG as the "full cover"
+	cover := landscapeJPEG(t, 100, 60)
+
+	c := cache.New(cacheDir)
+	d := testDetail()
+	if err := c.Store("ABF-004", &cache.CacheEntry{CachedAt: time.Now(), Detail: d, Poster: cover, ExtraFanart: [][]byte{cover, cover}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// damaged output: video present, everything else missing/broken
+	movieFolder := filepath.Join(out, "video", "ABF-004")
+	os.MkdirAll(movieFolder, 0755)
+	os.WriteFile(filepath.Join(movieFolder, "ABF-004.mp4"), []byte("v"), 0644)
+	os.WriteFile(filepath.Join(movieFolder, "ABF-004.nfo"), []byte("<?xml broken"), 0644)
+	os.WriteFile(filepath.Join(movieFolder, "poster.jpg"), cover, 0644)      // landscape poster (legacy)
+	os.WriteFile(filepath.Join(movieFolder, "fanart.jpg"), cover[:12], 0644) // truncated
+
+	api := &client.Client{} // nil internals: any network attempt would panic
+	fixOutput(context.Background(), api, c, out, false)
+
+	// NFO repaired
+	if !cache.ValidNFOFile(filepath.Join(movieFolder, "ABF-004.nfo")) {
+		t.Error("NFO not repaired")
+	}
+	// fanart restored, poster now portrait
+	if !imageutil.ValidFile(filepath.Join(movieFolder, "fanart.jpg")) {
+		t.Error("fanart not restored")
+	}
+	if portrait, err := imageutil.IsPortraitFile(filepath.Join(movieFolder, "poster.jpg")); err != nil || !portrait {
+		t.Errorf("poster not cropped to portrait (err=%v)", err)
+	}
+	// symlinks rebuilt
+	for _, p := range []string{
+		filepath.Join(out, "actor", "女優A", "ABF-004"),
+		filepath.Join(out, "tag", "タグX", "ABF-004"),
+		filepath.Join(out, "fullname", "ABF-004 テストタイトル"),
+		filepath.Join(movieFolder, "extrafanart", "extrafanart-0.jpg"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing after fix: %s (%v)", p, err)
+		}
+	}
+	// unknown code without cache is skipped, not fatal
+	os.MkdirAll(filepath.Join(out, "video", "NO-999"), 0755)
+	fixOutput(context.Background(), api, c, out, false)
+}
+
+// landscapeJPEG builds a solid-color landscape JPEG for tests.
+func landscapeJPEG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

@@ -1,13 +1,8 @@
 package cache
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,12 +11,13 @@ import (
 	"github.com/RPbro/javdbapi"
 
 	"github.com/gitsang/capture/pkg/code"
+	"github.com/gitsang/capture/pkg/imageutil"
 )
 
-// CacheEntry is one cached scrape result. Metadata lives in
-// {cache-dir}/{CODE}.json; images are stored as raw files under
-// {cache-dir}/{CODE}/ (poster.jpg, extrafanart-N.jpg) so they stay
-// inspectable and individually repairable.
+// CacheEntry is one cached scrape result. Everything for one code lives in
+// a single folder: {cache-dir}/{CODE}/{CODE}.json (metadata) plus raw image
+// files (poster.jpg, extrafanart-N.jpg) so they stay inspectable and
+// individually repairable.
 //
 // Poster/ExtraFanart carry image bytes in memory. They are still serialized
 // to JSON for backward compatibility with entries written by older versions
@@ -45,7 +41,15 @@ func (c *Cache) base(movieCode string) string {
 	return filepath.Join(c.dir, SanitizeName(code.Normalize(movieCode)))
 }
 
-func (c *Cache) path(movieCode string) string { return c.base(movieCode) + ".json" }
+func (c *Cache) path(movieCode string) string {
+	name := SanitizeName(code.Normalize(movieCode))
+	return filepath.Join(c.base(movieCode), name+".json")
+}
+
+// legacyPath is the pre-folder layout: {cache-dir}/{CODE}.json.
+func (c *Cache) legacyPath(movieCode string) string {
+	return c.base(movieCode) + ".json"
+}
 
 func (c *Cache) imagePath(movieCode, name string) string {
 	return filepath.Join(c.base(movieCode), name)
@@ -57,7 +61,12 @@ func (c *Cache) imagePath(movieCode, name string) string {
 func (c *Cache) Load(movieCode string) *CacheEntry {
 	data, err := os.ReadFile(c.path(movieCode))
 	if err != nil {
-		return nil
+		// Fall back to the legacy flat layout ({cache-dir}/{CODE}.json,
+		// possibly with base64-embedded images).
+		data, err = os.ReadFile(c.legacyPath(movieCode))
+		if err != nil {
+			return nil
+		}
 	}
 	var entry CacheEntry
 	if err := json.Unmarshal(data, &entry); err != nil || entry.Detail == nil {
@@ -88,12 +97,13 @@ func (c *Cache) Store(movieCode string, entry *CacheEntry) error {
 		return err
 	}
 
+	// Everything under one per-code folder.
+	if err := os.MkdirAll(c.base(movieCode), 0755); err != nil {
+		return err
+	}
+
 	// Images as raw files.
 	if ValidImage(entry.Poster) || len(entry.ExtraFanart) > 0 {
-		imgDir := c.base(movieCode)
-		if err := os.MkdirAll(imgDir, 0755); err != nil {
-			return err
-		}
 		if ValidImage(entry.Poster) {
 			if err := atomicWriteFile(c.imagePath(movieCode, "poster.jpg"), entry.Poster); err != nil {
 				return err
@@ -136,24 +146,12 @@ func atomicWriteFile(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// ValidImage reports whether data is a fully decodable image (guards against
-// truncated downloads and HTML error pages saved as .jpg).
-func ValidImage(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	_, _, err := image.Decode(bytes.NewReader(data))
-	return err == nil
-}
+// ValidImage reports whether data is a fully decodable image.
+// Deprecated alias kept for callers; prefer imageutil.Valid.
+func ValidImage(data []byte) bool { return imageutil.Valid(data) }
 
 // ValidImageFile checks an on-disk image for completeness.
-func ValidImageFile(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return ValidImage(data)
-}
+func ValidImageFile(path string) bool { return imageutil.ValidFile(path) }
 
 // ValidNFOFile checks the NFO exists, is non-empty and looks like our XML
 // (starts with the XML declaration and closes the <movie> element).
