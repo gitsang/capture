@@ -17,9 +17,10 @@ import (
 
 // CacheEntry is one cached scrape result, stored as {cache-dir}/{CODE}.json.
 type CacheEntry struct {
-	CachedAt time.Time             `json:"cached_at"`
-	Detail   *javdbapi.VideoDetail `json:"detail"`
-	Poster   []byte                `json:"poster,omitempty"`
+	CachedAt    time.Time             `json:"cached_at"`
+	Detail      *javdbapi.VideoDetail `json:"detail"`
+	Poster      []byte                `json:"poster,omitempty"`
+	ExtraFanart [][]byte              `json:"extra_fanart,omitempty"`
 }
 
 type Cache struct {

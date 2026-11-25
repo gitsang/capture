@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/RPbro/javdbapi"
@@ -21,7 +23,9 @@ type Client struct {
 
 // NewClient builds the SDK client. Retry/backoff and API rate limiting are
 // configured inside the SDK (shared budget across all its requests).
-func NewClient(interval, retryBase time.Duration, retryAttempts int) (*Client, error) {
+// proxyURL (optional) routes both API and image requests through a proxy;
+// insecure skips TLS certificate verification (useful with MITM proxies).
+func NewClient(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool) (*Client, error) {
 	limiter := NewLimiter(interval)
 
 	rps := 1.0
@@ -29,8 +33,25 @@ func NewClient(interval, retryBase time.Duration, retryAttempts int) (*Client, e
 		rps = float64(time.Second) / float64(interval)
 	}
 
+	// Image-download HTTP client (API client is built by the SDK).
+	imgTransport := http.DefaultTransport.(*http.Transport).Clone()
+	if insecure {
+		imgTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	if proxyURL != "" {
+		pu, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --proxy %q: %w", proxyURL, err)
+		}
+		imgTransport.Proxy = http.ProxyURL(pu)
+	}
+
 	api, err := javdbapi.NewClient(javdbapi.ClientConfig{
 		BaseURL: "https://javdb.com",
+		HTTP: javdbapi.HTTPConfig{
+			ProxyURL: sdkProxyURL(insecure, proxyURL),
+			Client:   sdkHTTPClient(insecure, proxyURL),
+		},
 		Retry: javdbapi.RetryPolicy{
 			MaxAttempts: retryAttempts,
 			BaseDelay:   retryBase,
@@ -49,8 +70,35 @@ func NewClient(interval, retryBase time.Duration, retryAttempts int) (*Client, e
 	return &Client{
 		api:     api,
 		limiter: limiter,
-		http:    &http.Client{Timeout: 60 * time.Second},
+		http:    &http.Client{Timeout: 60 * time.Second, Transport: imgTransport},
 	}, nil
+}
+
+// sdkProxyURL passes the proxy to the SDK only when it builds its own HTTP
+// client; the SDK forbids combining HTTP.Client with ProxyURL.
+func sdkProxyURL(insecure bool, proxyURL string) string {
+	if insecure {
+		return ""
+	}
+	return proxyURL
+}
+
+// sdkHTTPClient returns a custom HTTP client for the SDK when insecure TLS
+// is requested (the SDK's own client cannot disable verification). Returns
+// nil otherwise so the SDK builds its own client with ProxyURL applied.
+// The proxy is baked into the transport here.
+func sdkHTTPClient(insecure bool, proxyURL string) *http.Client {
+	if !insecure {
+		return nil
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	if proxyURL != "" {
+		if pu, err := url.Parse(proxyURL); err == nil {
+			tr.Proxy = http.ProxyURL(pu)
+		}
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: tr}
 }
 
 // SearchByCode finds the movie with the exact code and fetches its detail page.

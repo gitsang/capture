@@ -21,21 +21,36 @@ type VideoFile struct {
 	Code     string
 }
 
-// NFOData represents the structure for NFO files
+// NFOData is the Emby/Jellyfin-style NFO layout (ported from the debug
+// branch): flat art fields, CDATA titles, dual genre/tag, release dates.
 type NFOData struct {
 	XMLName       xml.Name   `xml:"movie"`
 	Title         string     `xml:"title"`
 	OriginalTitle string     `xml:"originaltitle"`
+	SortTitle     string     `xml:"sorttitle"`
+	CustomRating  string     `xml:"customrating"`
+	MPAA          string     `xml:"mpaa"`
+	Set           string     `xml:"set"`
 	Plot          string     `xml:"plot"`
+	Outline       string     `xml:"outline"`
 	Runtime       string     `xml:"runtime"`
 	Year          string     `xml:"year"`
 	Studio        string     `xml:"studio"`
 	Director      string     `xml:"director"`
+	Poster        string     `xml:"poster"`
+	Thumb         string     `xml:"thumb"`
+	Fanart        string     `xml:"fanart"`
 	Genre         []string   `xml:"genre"`
+	Tag           []string   `xml:"tag"`
 	Actor         []NFOActor `xml:"actor"`
-	Poster        string     `xml:"art>poster"`
-	Fanart        string     `xml:"art>fanart"`
-	Code          string     `xml:"uniqueid"`
+	Maker         string     `xml:"maker"`
+	Label         string     `xml:"label"`
+	Num           string     `xml:"num"`
+	Premiered     string     `xml:"premiered"`
+	ReleaseDate   string     `xml:"releasedate"`
+	Release       string     `xml:"release"`
+	Cover         string     `xml:"cover"`
+	Website       string     `xml:"website"`
 }
 
 type NFOActor struct {
@@ -48,6 +63,8 @@ var (
 	outputDir     string
 	cacheDir      string
 	force         bool
+	proxyURL      string
+	insecure      bool
 	interval      time.Duration
 	retryBase     time.Duration
 	retryAttempts int
@@ -64,6 +81,7 @@ files into properly structured folders with NFO files and cover images.
 
 Output layout:
   {output}/video/CODE/          video + CODE.nfo + poster.jpg + fanart.jpg
+                                + thumb.jpg + extrafanart/extrafanart-N.jpg
   {output}/actor/<name>/CODE    symlink to the video folder
   {output}/tag/<name>/CODE      symlink to the video folder`,
 	Run: runCapture,
@@ -74,6 +92,8 @@ func init() {
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
 	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
 	rootCmd.Flags().BoolVar(&force, "force", false, "Ignore cached results and re-scrape")
+	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
+	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
 	rootCmd.Flags().DurationVar(&interval, "interval", time.Minute, "Minimum interval between HTTP requests (0 disables)")
 	rootCmd.Flags().DurationVar(&retryBase, "retry-base", time.Minute, "Initial retry backoff delay (doubles each retry)")
 	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
@@ -122,7 +142,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("Found %d video files\n\n", len(videoFiles))
 
-	client, err := NewClient(interval, retryBase, retryAttempts)
+	client, err := NewClient(interval, retryBase, retryAttempts, proxyURL, insecure)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 		return
@@ -154,11 +174,13 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	// 1. Get metadata: cache first (unless --force), then live scrape.
 	var detail *javdbapi.VideoDetail
 	var poster []byte
+	var extraFanart [][]byte
 
 	if !force {
 		if entry := cache.Load(video.Code); entry != nil {
 			detail = entry.Detail
 			poster = entry.Poster
+			extraFanart = entry.ExtraFanart
 			fmt.Printf("  💾 Using cached result (cached at %s)\n", entry.CachedAt.Format(time.RFC3339))
 		}
 	}
@@ -172,7 +194,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 		detail = d
 		fmt.Printf("  ✅ Found movie data: %s\n", detail.Summary.Title)
 
-		// Download cover into memory for caching (poster doubles as fanart).
+		// Download cover into memory for caching (poster doubles as fanart/thumb).
 		if url := detail.Summary.CoverURL; url != "" {
 			p, err := client.DownloadImageBytes(ctx, url, retryBase, retryAttempts)
 			if err != nil {
@@ -182,7 +204,29 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			}
 		}
 
-		entry := &CacheEntry{CachedAt: time.Now(), Detail: detail, Poster: poster}
+		// Download screenshots (extrafanart) into memory for caching.
+		// Bytes stay index-aligned with detail.Screenshots; a failed download
+		// leaves a nil slot so it can be retried on a later run.
+		fetched := 0
+		for i, shot := range detail.Screenshots {
+			var b []byte
+			if shot.FullURL != "" {
+				var err error
+				b, err = client.DownloadImageBytes(ctx, shot.FullURL, retryBase, retryAttempts)
+				if err != nil {
+					fmt.Printf("  ⚠️  Failed to download extrafanart-%d: %v\n", i, err)
+					b = nil
+				} else {
+					fetched++
+				}
+			}
+			extraFanart = append(extraFanart, b)
+		}
+		if fetched > 0 {
+			fmt.Printf("  🖼️  Fetched %d extrafanart images\n", fetched)
+		}
+
+		entry := &CacheEntry{CachedAt: time.Now(), Detail: detail, Poster: poster, ExtraFanart: extraFanart}
 		if err := cache.Store(video.Code, entry); err != nil {
 			fmt.Printf("  ⚠️  Failed to write cache: %v\n", err)
 		}
@@ -208,6 +252,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	for _, img := range []struct{ name, path string }{
 		{"poster", posterPath},
 		{"fanart", fanartPath},
+		{"thumb", filepath.Join(movieFolder, "thumb.jpg")},
 	} {
 		if validImageFile(img.path) {
 			fmt.Printf("  🖼️  %s.jpg already complete\n", img.name)
@@ -229,6 +274,39 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			}
 		} else {
 			fmt.Printf("  ⚠️  No cover URL for %s.jpg\n", img.name)
+		}
+	}
+
+	// 4b. Extrafanart: one file per screenshot, verified/repaired like the rest.
+	if len(detail.Screenshots) > 0 || len(extraFanart) > 0 {
+		extraDir := filepath.Join(movieFolder, "extrafanart")
+		if err := os.MkdirAll(extraDir, 0755); err != nil {
+			fmt.Printf("  ⚠️  Failed to create extrafanart dir: %v\n", err)
+		} else {
+			restored, downloaded := 0, 0
+			for i, shot := range detail.Screenshots {
+				p := filepath.Join(extraDir, fmt.Sprintf("extrafanart-%d.jpg", i))
+				if validImageFile(p) {
+					continue
+				}
+				if i < len(extraFanart) && validImage(extraFanart[i]) {
+					if err := os.WriteFile(p, extraFanart[i], 0644); err == nil {
+						restored++
+						continue
+					}
+				}
+				if shot.FullURL == "" {
+					continue
+				}
+				if err := client.DownloadImage(ctx, shot.FullURL, p, retryBase, retryAttempts); err != nil {
+					fmt.Printf("  ⚠️  Failed to download extrafanart-%d: %v\n", i, err)
+				} else {
+					downloaded++
+				}
+			}
+			if restored+downloaded > 0 {
+				fmt.Printf("  🖼️  extrafanart: %d restored from cache, %d downloaded\n", restored, downloaded)
+			}
 		}
 	}
 
@@ -279,21 +357,24 @@ func createIndexSymlink(kind, name, code, movieFolder string) bool {
 	}
 	link := filepath.Join(dir, code)
 
+	// Relative target: {output}/{kind}/{name}/CODE -> ../../video/CODE,
+	// so the whole output tree can be moved/renamed without breaking links.
+	relTarget, err := filepath.Rel(dir, movieFolder)
+	if err != nil {
+		relTarget = movieFolder
+	}
+
 	if target, err := os.Readlink(link); err == nil {
-		if target == movieFolder {
+		if target == relTarget {
 			return false // already correct
 		}
-		os.Remove(link) // stale link, replace
+		os.Remove(link) // stale (or old absolute) link, replace
 	} else if _, err := os.Lstat(link); err == nil {
 		fmt.Printf("  ⚠️  %s exists and is not a symlink, skipping: %s\n", kind, link)
 		return false
 	}
 
-	absFolder, err := filepath.Abs(movieFolder)
-	if err != nil {
-		absFolder = movieFolder
-	}
-	if err := os.Symlink(absFolder, link); err != nil {
+	if err := os.Symlink(relTarget, link); err != nil {
 		fmt.Printf("  ⚠️  Failed to create symlink %s: %v\n", link, err)
 		return false
 	}
@@ -350,54 +431,79 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 func createNFOFile(nfoPath, code string, detail *javdbapi.VideoDetail) error {
 	s := detail.Summary
 
-	year := ""
+	year, date := "", ""
 	if !s.PublishedAt.IsZero() {
 		year = s.PublishedAt.Format("2006")
+		date = s.PublishedAt.Format("2006-01-02")
 	}
 
-	runtime := "240"
+	runtime := "119minutes" // debug-branch default when unknown
 	if detail.DurationMinutes != nil && *detail.DurationMinutes > 0 {
-		runtime = fmt.Sprintf("%d", *detail.DurationMinutes)
+		runtime = fmt.Sprintf("%dminutes", *detail.DurationMinutes)
 	}
-	studio := "Unknown Studio"
-	if detail.Maker != nil && detail.Maker.Name != "" {
-		studio = detail.Maker.Name
+	maker := ""
+	if detail.Maker != nil {
+		maker = detail.Maker.Name
 	}
-	director := "Unknown Director"
-	if detail.Director != nil && detail.Director.Name != "" {
+	director := ""
+	if detail.Director != nil {
 		director = detail.Director.Name
 	}
+	label := ""
+	if detail.Series != nil {
+		label = detail.Series.Name
+	}
 
-	plot := fmt.Sprintf("Movie code: %s", code)
+	fullTitle := fmt.Sprintf("<![CDATA[%s-%s]]>", code, s.Title)
+	plot := fmt.Sprintf("<![CDATA[%s]]>", s.Title)
 	if s.Score != nil {
-		plot += fmt.Sprintf("\nScore: %.2f (%d votes)", s.Score.Value, s.Score.Count)
+		plot = fmt.Sprintf("<![CDATA[%s\nScore: %.2f (%d votes)]]>", s.Title, s.Score.Value, s.Score.Count)
 	}
 
 	nfo := NFOData{
-		Title:         s.Title,
-		OriginalTitle: s.Title,
+		Title:         fullTitle,
+		OriginalTitle: fullTitle,
+		SortTitle:     fullTitle,
+		CustomRating:  "JP-18+",
+		MPAA:          "JP-18+",
+		Set:           "\uA789", // modifier-letter colon, debug-branch convention
 		Plot:          plot,
+		Outline:       fmt.Sprintf("<![CDATA[%s]]>", s.Title),
 		Runtime:       runtime,
 		Year:          year,
-		Studio:        studio,
+		Studio:        maker,
 		Director:      director,
-		Code:          code,
 		Poster:        "poster.jpg",
+		Thumb:         "thumb.jpg",
 		Fanart:        "fanart.jpg",
+		Maker:         maker,
+		Label:         label,
+		Num:           strings.ToLower(code),
+		Premiered:     date,
+		ReleaseDate:   date,
+		Release:       date,
+		Cover:         s.CoverURL,
+		Website:       fmt.Sprintf("https://www.javdatabase.com/movies/%s", strings.ToLower(code)),
 	}
 	for _, tag := range detail.Tags {
 		nfo.Genre = append(nfo.Genre, tag.Name)
+		nfo.Tag = append(nfo.Tag, tag.Name)
 	}
 	for _, actor := range detail.Actors {
-		nfo.Actor = append(nfo.Actor, NFOActor{Name: actor.Name, Role: "Actress"})
+		nfo.Actor = append(nfo.Actor, NFOActor{Name: actor.Name, Role: ""})
 	}
 
-	xmlData, err := xml.MarshalIndent(nfo, "", "    ")
+	xmlData, err := xml.MarshalIndent(nfo, "", "  ")
 	if err != nil {
 		return err
 	}
-	xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+	xmlContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" ?>
 %s`, string(xmlData))
+	// encoding/xml escapes the CDATA markers we injected; restore them.
+	xmlContent = strings.ReplaceAll(xmlContent, "&lt;![CDATA[", "<![CDATA[")
+	xmlContent = strings.ReplaceAll(xmlContent, "]]&gt;", "]]>")
+	// DOS line endings, as expected by some media servers (debug branch).
+	xmlContent = strings.ReplaceAll(xmlContent, "\n", "\r\n")
 
 	return atomicWrite(nfoPath, []byte(xmlContent), 0644)
 }

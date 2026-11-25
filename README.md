@@ -9,7 +9,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
 - **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
-- **Caching**: Caches successful scrapes (metadata + cover) per code under `/tmp/capture`; validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
+- **Caching**: Caches successful scrapes (metadata + cover + screenshots) per code under `/tmp/capture`; validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 1m) and exponential-backoff retry (default 1m base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
@@ -90,6 +90,8 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `-o, --output`: Output directory for organized files (default: ./output)
 - `--cache-dir`: Directory for cached scrape results, one JSON file per code (default: /tmp/capture)
 - `--force`: Ignore cached results and re-scrape
+- `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
+- `--insecure`: Skip TLS certificate verification (for MITM proxies)
 - `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 1m; `0` disables)
 - `--retry-base`: Initial retry backoff delay, doubles each retry (default: 1m)
 - `--retry-attempts`: Maximum attempts per request (default: 5; `1` disables retries)
@@ -108,7 +110,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 3. **Metadata Fetching**: Cache lookup first (unless `--force`); otherwise searches javdb for an exact code match and fetches the detail page, then stores metadata + cover bytes in the cache
 4. **Integrity Checks**: Existing NFO/JPG files are validated (XML well-formedness, full image decode); incomplete files are repaired from cache or re-downloaded
 5. **Folder Creation**: Creates `output/video/CODE/`
-6. **NFO Creation**: Generates XML NFO files with movie metadata (maker, director and duration when available)
+6. **NFO Creation**: Generates Emby/Jellyfin-style NFO files: CDATA `CODE-Title` titles, sorttitle, customrating/mpaa `JP-18+`, maker/label/num, premiered/releasedate/release, dual `<genre>`+`<tag>`, website link, CRLF line endings; maker, director and duration are filled when available
 7. **Image Download**: Downloads the cover as poster.jpg and fanart.jpg
 8. **File Moving**: Renames video files to match codes and moves them into `output/video/CODE/`
 9. **Index Symlinks**: For every actor and tag, creates `output/actor/<name>/CODE` and `output/tag/<name>/CODE` symlinks pointing at the video folder
@@ -122,28 +124,34 @@ output/
 │   │   ├── ABCD-180.mp4      # Renamed video file
 │   │   ├── ABCD-180.nfo      # Movie metadata
 │   │   ├── poster.jpg        # Cover image
-│   │   └── fanart.jpg        # Fanart image
+│   │   ├── fanart.jpg        # Fanart image
+│   │   ├── thumb.jpg         # Thumbnail (same cover)
+│   │   └── extrafanart/      # Screenshots
+│   │       ├── extrafanart-0.jpg
+│   │       └── ...
 │   └── FC2-PPV-1234567/
 │       └── ...
 ├── actor/
 │   └── 女優名/
-│       └── ABCD-180 -> /abs/path/output/video/ABCD-180   # symlink
+│       └── ABCD-180 -> ../../video/ABCD-180   # relative symlink
 └── tag/
     └── タグ名/
-        └── ABCD-180 -> /abs/path/output/video/ABCD-180   # symlink
+        └── ABCD-180 -> ../../video/ABCD-180   # relative symlink
 ```
 
 ## 6. NFO File Content
 
 The generated NFO files include:
 
-- Title and original title
-- Plot description with code and score
-- Year (extracted from publication date)
-- Genres (from tags)
-- Actresses (as actors)
-- Unique ID (movie code)
-- Poster and fanart references
+- CDATA `CODE-Title` as title/originaltitle/sorttitle
+- customrating/mpaa `JP-18+`
+- Plot/outline (title, plus score when available)
+- Runtime (`Nminutes`), year, premiered/releasedate/release
+- Studio/maker, director, label (series), num (lowercase code)
+- Genres and tags (both from site tags)
+- Actors
+- Poster/thumb/fanart references, cover URL, javdatabase website link
+- CRLF (DOS) line endings
 
 ## 7. Supported Video Extensions
 
