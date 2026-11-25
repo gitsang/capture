@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,9 +18,8 @@ var (
 	inputDir      string
 	outputDir     string
 	cacheDir      string
-	force         bool
-	fix           bool
-	fixOnline     bool
+	noCache       bool
+	fix           string
 	proxyURL      string
 	insecure      bool
 	cookie        string
@@ -48,15 +48,36 @@ func init() {
 	rootCmd.Flags().StringVarP(&inputDir, "input", "i", ".", "Input directory to scan for video files")
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
 	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
-	rootCmd.Flags().BoolVar(&force, "force", false, "Ignore cached results and re-scrape")
-	rootCmd.Flags().BoolVar(&fix, "fix", false, "Repair the output directory instead of scanning input (NFO/images/symlinks, portrait poster)")
-	rootCmd.Flags().BoolVar(&fixOnline, "fix-online", false, "With --fix: allow network access to re-scrape missing cache entries and re-download missing images")
-	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
-	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
-	rootCmd.Flags().StringVar(&cookie, "cookie", "", "Cookie header for javdb.com from a logged-in browser session (e.g. \"_jdb_session=...\")")
+	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached results and re-scrape (also applies to --fix)")
+	rootCmd.Flags().StringVar(&fix, "fix", "", "Repair the output directory instead of scanning input. Optional comma list of targets to force regeneration: nfo,fanart,thumb,extrafanart,poster,symlink (empty/missing = only create what is absent or broken)")
+	// Allow bare `--fix` (no value) to mean "missing".
+	rootCmd.Flags().Lookup("fix").NoOptDefVal = "missing"
+
 	rootCmd.Flags().DurationVar(&interval, "interval", 10*time.Second, "Minimum interval between HTTP requests (0 disables)")
 	rootCmd.Flags().DurationVar(&retryBase, "retry-base", 10*time.Second, "Initial retry backoff delay (doubles each retry)")
 	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
+}
+
+// looksLikeFixTargets reports whether s resembles a --fix target list:
+// comma-separated lowercase bare words. Unknown words are tolerated here
+// so misspellings surface as proper errors from parseFixTargets instead of
+// being silently ignored.
+func looksLikeFixTargets(s string) bool {
+	if s == "" || strings.ContainsAny(s, "/\\. ") {
+		return false
+	}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if !(r >= 'a' && r <= 'z') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func main() {
@@ -67,6 +88,17 @@ func main() {
 }
 
 func runCapture(cmd *cobra.Command, args []string) {
+	// --fix: adopt positional target list (space form), then validate.
+	if cmd.Flags().Changed("fix") {
+		if fix == "missing" && len(args) > 0 && looksLikeFixTargets(args[0]) {
+			fix = args[0]
+		}
+		if _, err := parseFixTargets(fix); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -75,7 +107,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 	fmt.Printf("Starting Capture\n")
 	fmt.Printf("Input directory: %s\n", inputDir)
 	fmt.Printf("Output directory: %s\n", outputDir)
-	fmt.Printf("Cache directory: %s (force=%v)\n", cacheDir, force)
+	fmt.Printf("Cache directory: %s (no-cache=%v)\n", cacheDir, noCache)
 	fmt.Printf("Request interval: %s, retry: %d attempts from %s (exponential)\n\n", interval, retryAttempts, retryBase)
 
 	if retryAttempts < 1 {
@@ -89,13 +121,23 @@ func runCapture(cmd *cobra.Command, args []string) {
 	}
 
 	// --fix: repair the output tree, never scan input.
-	if fix {
+	if cmd.Flags().Changed("fix") {
+		targets, err := parseFixTargets(fix)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
 		api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure, cookie)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 			return
 		}
-		fixOutput(ctx, api, cache.New(cacheDir), outputDir, fixOnline)
+		if targets.missingOnly() {
+			fmt.Println("Fix mode: repairing missing/broken artifacts only")
+		} else {
+			fmt.Printf("Fix mode: forcing regeneration of %s\n\n", fix)
+		}
+		fixOutput(ctx, api, cache.New(cacheDir), outputDir, targets, noCache)
 		return
 	}
 	absOutput, err := filepath.Abs(outputDir)
@@ -122,7 +164,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 
 	for i, video := range videoFiles {
 		fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(videoFiles), video.Filename)
-		processVideo(ctx, api, c, outputDir, force, video)
+		processVideo(ctx, api, c, outputDir, noCache, video)
 		fmt.Println()
 	}
 

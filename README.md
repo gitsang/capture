@@ -9,7 +9,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
 - **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
-- **Caching**: Caches successful scrapes per code under `/tmp/capture` — everything per code in one folder `{CODE}/` ({CODE}.json metadata + raw poster.jpg/extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
+- **Caching**: Caches successful scrapes per code under `/tmp/capture` — everything per code in one folder `{CODE}/` ({CODE}.json metadata + raw poster.jpg/extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--no-cache` bypasses the cache
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
@@ -89,9 +89,15 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `-i, --input`: Input directory to scan for video files (default: current directory). The output directory is always skipped during scanning.
 - `-o, --output`: Output directory for organized files (default: ./output)
 - `--cache-dir`: Directory for cached scrape results, one JSON file per code (default: /tmp/capture)
-- `--force`: Ignore cached results and re-scrape
-- `--fix`: Repair the output directory instead of scanning input — rebuilds missing actor/tag/fullname symlinks, restores broken NFO/images from cache, and re-crops landscape posters to portrait
-- `--fix-online`: With `--fix`, allow network access to re-scrape codes missing from cache and re-download missing images
+- `--no-cache`: Ignore cached results and re-scrape (applies to both normal runs and `--fix`)
+- `--fix [targets]`: Repair the output directory instead of scanning input. Without targets (or `missing`), only absent/broken artifacts are created: missing actor/tag/fullname symlinks, broken NFO/images restored from cache, landscape posters re-cropped. Named targets force regeneration even when files exist:
+  - `nfo`: regenerate the NFO from metadata
+  - `fanart`: re-write fanart from the cached cover (or re-download)
+  - `thumb`: re-copy thumb from fanart
+  - `extrafanart`: re-write all screenshots
+  - `poster`: re-crop the portrait poster from fanart
+  - `symlink`: delete and re-create all actor/tag/fullname symlinks
+  - e.g. `capture --fix poster,symlink`; cache is used when present, codes missing from cache are scraped from the network (unless the scrape fails they are skipped)
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
 - `--cookie`: Cookie header from a logged-in javdb browser session (e.g. `"_jdb_session=..."`), attached to javdb.com requests only. Some detail pages require login; copy the cookie from your browser's DevTools (Application → Cookies → javdb.com)
@@ -110,7 +116,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 
 1. **Scanning**: Recursively scans the input directory for video files with supported extensions
 2. **Code Extraction**: Case-insensitive patterns for standard codes (`ABCD-180`), FC2 (`FC2-PPV-1234567`, `fc2-1234567`), multi-segment codes (`T28-123`, `1Pondo-010120-001`) and date-style ids (`010120_001`); results are normalized to uppercase
-3. **Metadata Fetching**: Cache lookup first (unless `--force`); otherwise searches javdb for an exact code match and fetches the detail page, then stores metadata + cover bytes in the cache
+3. **Metadata Fetching**: Cache lookup first (unless `--no-cache`); otherwise searches javdb for an exact code match and fetches the detail page, then stores metadata + cover bytes in the cache
 4. **Integrity Checks**: Existing NFO/JPG files are validated (XML well-formedness, full image decode); incomplete files are repaired from cache or re-downloaded
 5. **Folder Creation**: Creates `output/video/CODE/`
 6. **NFO Creation**: Generates Emby/Jellyfin-style NFO files: CDATA `CODE-Title` titles, sorttitle, customrating/mpaa `JP-18+`, maker/label/num, premiered/releasedate/release, dual `<genre>`+`<tag>`, website link, CRLF line endings; maker, director and duration are filled when available

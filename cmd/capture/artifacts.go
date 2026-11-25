@@ -15,15 +15,57 @@ import (
 	"github.com/gitsang/capture/pkg/imageutil"
 )
 
+// fixTargets selects which artifacts --fix regenerates.
+type fixTargets struct {
+	nfo         bool
+	fanart      bool
+	thumb       bool
+	extrafanart bool
+	poster      bool
+	symlink     bool
+}
+
+// missingOnly: only create/repair absent or broken artifacts (default).
+// A named target (e.g. --fix poster) forces regeneration of that artifact
+// even when it already exists and is valid.
+func (t fixTargets) missingOnly() bool {
+	return !t.nfo && !t.fanart && !t.thumb && !t.extrafanart && !t.poster && !t.symlink
+}
+
+// parseFixTargets parses the --fix value: empty/"missing" = repair only
+// missing/broken; otherwise a comma list of nfo,fanart,thumb,extrafanart,
+// poster,symlink (each forces regeneration; implies missing repair too).
+func parseFixTargets(spec string) (fixTargets, error) {
+	var t fixTargets
+	for _, part := range strings.Split(spec, ",") {
+		switch strings.ToLower(strings.TrimSpace(part)) {
+		case "", "missing":
+			// default behavior, nothing forced
+		case "nfo":
+			t.nfo = true
+		case "fanart":
+			t.fanart = true
+		case "thumb":
+			t.thumb = true
+		case "extrafanart":
+			t.extrafanart = true
+		case "poster":
+			t.poster = true
+		case "symlink":
+			t.symlink = true
+		default:
+			return t, fmt.Errorf("unknown --fix target %q (valid: nfo,fanart,thumb,extrafanart,poster,symlink,missing)", part)
+		}
+	}
+	return t, nil
+}
+
 // materializeArtifacts writes/repairs everything inside {output}/video/CODE
-// plus the index symlinks: NFO, poster (portrait crop), fanart, thumb,
-// extrafanart, fullname/actor/tag links. Existing complete files are kept;
-// broken/missing ones are restored from cached bytes or re-downloaded via
-// api (which may be nil in offline --fix runs).
-//
-// allowDownload=false skips all network fallbacks (cache-only repair).
+// plus the index symlinks. Existing complete files are kept unless the
+// corresponding target is forced; broken/missing ones are restored from
+// cached bytes or re-downloaded via api (nil api = offline).
 func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, movieCode string,
-	detail *javdbapi.VideoDetail, cover []byte, extraFanart [][]byte, allowDownload bool) {
+	detail *javdbapi.VideoDetail, cover []byte, extraFanart [][]byte, t fixTargets) {
 
 	movieFolder := filepath.Join(outputDir, "video", movieCode)
 	nfoPath := filepath.Join(movieFolder, movieCode+".nfo")
@@ -36,8 +78,8 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 		return
 	}
 
-	// NFO: regenerate when missing or incomplete.
-	if cache.ValidNFOFile(nfoPath) {
+	// NFO.
+	if !t.nfo && cache.ValidNFOFile(nfoPath) {
 		fmt.Printf("  📄 NFO already complete\n")
 	} else if err := createNFOFile(nfoPath, movieCode, detail); err != nil {
 		fmt.Printf("  ⚠️  Failed to create NFO file: %v\n", err)
@@ -45,38 +87,50 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 		fmt.Printf("  📄 Created NFO file\n")
 	}
 
-	// fanart/thumb: full landscape cover.
-	for _, img := range []struct{ name, path string }{
-		{"fanart", fanartPath},
-		{"thumb", thumbPath},
-	} {
-		if imageutil.ValidFile(img.path) {
-			fmt.Printf("  🖼️  %s.jpg already complete\n", img.name)
-			continue
+	// fanart: full landscape cover.
+	if !t.fanart && imageutil.ValidFile(fanartPath) {
+		fmt.Printf("  🖼️  fanart.jpg already complete\n")
+	} else if imageutil.Valid(cover) {
+		if err := client.AtomicWrite(fanartPath, cover, 0644); err != nil {
+			fmt.Printf("  ⚠️  Failed to write fanart.jpg: %v\n", err)
+		} else {
+			fmt.Printf("  🖼️  fanart.jpg written from cache\n")
 		}
-		if imageutil.Valid(cover) {
-			if err := client.AtomicWrite(img.path, cover, 0644); err != nil {
-				fmt.Printf("  ⚠️  Failed to write %s.jpg: %v\n", img.name, err)
-			} else {
-				fmt.Printf("  🖼️  Restored %s.jpg from cache\n", img.name)
-			}
-			continue
+	} else if api != nil && detail.Summary.CoverURL != "" {
+		if err := api.DownloadImage(ctx, detail.Summary.CoverURL, fanartPath, retryBase, retryAttempts); err != nil {
+			fmt.Printf("  ⚠️  Failed to download fanart.jpg: %v\n", err)
+		} else {
+			fmt.Printf("  🖼️  Downloaded fanart.jpg\n")
 		}
-		if allowDownload && api != nil && detail.Summary.CoverURL != "" {
-			if err := api.DownloadImage(ctx, detail.Summary.CoverURL, img.path, retryBase, retryAttempts); err != nil {
-				fmt.Printf("  ⚠️  Failed to download %s.jpg: %v\n", img.name, err)
+	} else {
+		fmt.Printf("  ⚠️  fanart.jpg missing and no cached cover to restore\n")
+	}
+
+	// thumb: copy of fanart.
+	if !t.thumb && imageutil.ValidFile(thumbPath) {
+		fmt.Printf("  🖼️  thumb.jpg already complete\n")
+	} else {
+		var src []byte
+		if imageutil.ValidFile(fanartPath) {
+			src, _ = os.ReadFile(fanartPath)
+		} else if imageutil.Valid(cover) {
+			src = cover
+		}
+		if imageutil.Valid(src) {
+			if err := client.AtomicWrite(thumbPath, src, 0644); err != nil {
+				fmt.Printf("  ⚠️  Failed to write thumb.jpg: %v\n", err)
 			} else {
-				fmt.Printf("  🖼️  Downloaded %s.jpg\n", img.name)
+				fmt.Printf("  🖼️  thumb.jpg copied from fanart\n")
 			}
 		} else {
-			fmt.Printf("  ⚠️  %s.jpg missing and no cached cover to restore\n", img.name)
+			fmt.Printf("  ⚠️  thumb.jpg: no fanart available to copy\n")
 		}
 	}
 
-	// poster: portrait crop of the cover's right half. Repair when missing,
+	// poster: portrait crop of fanart (full cover). Repair when missing,
 	// corrupt, or still landscape (legacy full-cover poster).
 	posterOK := false
-	if imageutil.ValidFile(posterPath) {
+	if !t.poster && imageutil.ValidFile(posterPath) {
 		if portrait, err := imageutil.IsPortraitFile(posterPath); err == nil && portrait {
 			posterOK = true
 			fmt.Printf("  🖼️  poster.jpg already complete (portrait)\n")
@@ -85,11 +139,11 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 	if !posterOK {
 		var src []byte
 		switch {
-		case imageutil.Valid(cover):
-			src = cover
 		case imageutil.ValidFile(fanartPath):
 			src, _ = os.ReadFile(fanartPath)
-		case allowDownload && api != nil && detail.Summary.CoverURL != "":
+		case imageutil.Valid(cover):
+			src = cover
+		case api != nil && detail.Summary.CoverURL != "":
 			if b, err := api.DownloadImageBytes(ctx, detail.Summary.CoverURL, retryBase, retryAttempts); err == nil {
 				src = b
 			} else {
@@ -118,7 +172,7 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 			restored, downloaded := 0, 0
 			for i, shot := range detail.Screenshots {
 				p := filepath.Join(extraDir, fmt.Sprintf("extrafanart-%d.jpg", i))
-				if imageutil.ValidFile(p) {
+				if !t.extrafanart && imageutil.ValidFile(p) {
 					continue
 				}
 				if i < len(extraFanart) && imageutil.Valid(extraFanart[i]) {
@@ -127,7 +181,7 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 						continue
 					}
 				}
-				if !allowDownload || api == nil || shot.FullURL == "" {
+				if api == nil || shot.FullURL == "" {
 					continue
 				}
 				if err := api.DownloadImage(ctx, shot.FullURL, p, retryBase, retryAttempts); err != nil {
@@ -137,17 +191,20 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 				}
 			}
 			if restored+downloaded > 0 {
-				fmt.Printf("  🖼️  extrafanart: %d restored from cache, %d downloaded\n", restored, downloaded)
+				fmt.Printf("  🖼️  extrafanart: %d written from cache, %d downloaded\n", restored, downloaded)
 			}
 		}
 	}
 
-	// Fullname index: {output}/fullname/{CODE} {title} -> ../video/CODE.
+	// Symlinks: fullname + actor/tag. Idempotent — correct links are kept,
+	// stale ones replaced. t.symlink forces re-creation of every link.
+	movieFolderAbs, _ := filepath.Abs(movieFolder)
+	if t.symlink {
+		removeIndexSymlinks(outputDir, movieCode, movieFolderAbs)
+	}
 	if createFullnameSymlink(outputDir, movieCode, detail.Summary.Title, movieFolder) {
 		fmt.Printf("  🔗 fullname symlink created: %s %s\n", movieCode, detail.Summary.Title)
 	}
-
-	// Symlinks for every actor and tag.
 	linkCount := 0
 	for _, actor := range detail.Actors {
 		if createIndexSymlink(outputDir, "actor", actor.Name, movieCode, movieFolder) {
@@ -162,11 +219,46 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 	fmt.Printf("  🔗 %d actor/tag symlinks created/updated\n", linkCount)
 }
 
-// fixOutput repairs an existing output tree without scanning input:
-// for every {output}/video/CODE folder it reloads the cached metadata and
-// re-materializes missing/broken artifacts and symlinks. With --fix-online
-// missing cache entries are re-scraped; otherwise they are reported only.
-func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, online bool) {
+// removeIndexSymlinks deletes all actor/tag/fullname symlinks pointing at
+// this movie folder (used by --fix symlink before re-creating them).
+func removeIndexSymlinks(outputDir, movieCode, movieFolderAbs string) {
+	for _, kind := range []string{"actor", "tag", "fullname"} {
+		root := filepath.Join(outputDir, kind)
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			sub := filepath.Join(root, e.Name())
+			links, err := os.ReadDir(sub)
+			if err != nil {
+				continue
+			}
+			for _, l := range links {
+				p := filepath.Join(sub, l.Name())
+				target, err := os.Readlink(p)
+				if err != nil {
+					continue // not a symlink
+				}
+				abs := target
+				if !filepath.IsAbs(abs) {
+					abs = filepath.Join(sub, target)
+				}
+				if absClean, err := filepath.Abs(abs); err == nil && absClean == movieFolderAbs {
+					os.Remove(p)
+				}
+			}
+		}
+	}
+}
+
+// fixOutput repairs an existing output tree without scanning input.
+// Cache is used when present; missing entries (or noCache=true) are
+// re-scraped from the network. Targets select forced regeneration.
+func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, t fixTargets, noCache bool) {
 	videoRoot := filepath.Join(outputDir, "video")
 	entries, err := os.ReadDir(videoRoot)
 	if err != nil {
@@ -186,12 +278,15 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 	for i, movieCode := range codes {
 		fmt.Printf("[%d/%d] Fixing: %s\n", i+1, len(codes), movieCode)
 
-		entry := c.Load(movieCode)
-		if entry == nil && online {
-			fmt.Printf("  🌐 No cache, re-scraping...\n")
+		var entry *cache.CacheEntry
+		if !noCache {
+			entry = c.Load(movieCode)
+		}
+		if entry == nil {
+			fmt.Printf("  🌐 No usable cache, scraping...\n")
 			d, err := api.SearchByCode(ctx, movieCode)
 			if err != nil {
-				fmt.Printf("  ❌ Failed to re-scrape: %v\n\n", err)
+				fmt.Printf("  ❌ Failed to scrape: %v\n\n", err)
 				skipped++
 				continue
 			}
@@ -211,14 +306,11 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 			if err := c.Store(movieCode, entry); err != nil {
 				fmt.Printf("  ⚠️  Failed to write cache: %v\n", err)
 			}
-		}
-		if entry == nil {
-			fmt.Printf("  ⚠️  No cached metadata; run with --fix-online to re-scrape. Skipping.\n\n")
-			skipped++
-			continue
+		} else {
+			fmt.Printf("  💾 Using cached result (cached at %s)\n", entry.CachedAt.Format(time.RFC3339))
 		}
 
-		materializeArtifacts(ctx, api, outputDir, movieCode, entry.Detail, entry.Poster, entry.ExtraFanart, online)
+		materializeArtifacts(ctx, api, outputDir, movieCode, entry.Detail, entry.Poster, entry.ExtraFanart, t)
 		fixed++
 		fmt.Println()
 	}

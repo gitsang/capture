@@ -63,7 +63,7 @@ type NFOActor struct {
 	Role string `xml:"role"`
 }
 
-func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, force bool, video VideoFile) {
+func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, noCache bool, video VideoFile) {
 	if video.Code == "" {
 		fmt.Printf("  ⚠️  No code found in filename, skipping\n")
 		return
@@ -73,12 +73,12 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	movieFolder := filepath.Join(outputDir, "video", video.Code)
 	newVideoPath := filepath.Join(movieFolder, video.Code+strings.ToLower(filepath.Ext(video.Path)))
 
-	// 1. Get metadata: cache first (unless --force), then live scrape.
+	// 1. Get metadata: cache first (unless --no-cache), then live scrape.
 	var detail *javdbapi.VideoDetail
 	var poster []byte
 	var extraFanart [][]byte
 
-	if !force {
+	if !noCache {
 		if entry := c.Load(video.Code); entry != nil {
 			detail = entry.Detail
 			poster = entry.Poster
@@ -135,7 +135,7 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	}
 
 	// 2-4b. Materialize NFO + artwork (shared with --fix).
-	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, true)
+	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, fixTargets{})
 
 	// 5. Move the video file. When the target already exists (cached rerun,
 	// duplicate source), remove the redundant source so it is not rescanned.
