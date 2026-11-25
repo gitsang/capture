@@ -93,7 +93,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
 - `--cookie`: Cookie header from a logged-in javdb browser session (e.g. `"_jdb_session=..."`), attached to javdb.com requests only. Some detail pages require login; copy the cookie from your browser's DevTools (Application → Cookies → javdb.com)
-- `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 10s; `0` disables)
+- `--interval`: Base interval between HTTP requests, e.g. `30s`, `2m` (default: 10s; `0` disables). Each wait is randomized ±50% (10s → 5–15s) to avoid a fixed request rhythm
 - `--retry-base`: Initial retry backoff delay, doubles each retry (default: 10s)
 - `--retry-attempts`: Maximum attempts per request (default: 5; `1` disables retries)
 
