@@ -3,6 +3,7 @@ package cache
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -17,7 +18,14 @@ import (
 	"github.com/gitsang/capture/pkg/code"
 )
 
-// CacheEntry is one cached scrape result, stored as {cache-dir}/{CODE}.json.
+// CacheEntry is one cached scrape result. Metadata lives in
+// {cache-dir}/{CODE}.json; images are stored as raw files under
+// {cache-dir}/{CODE}/ (poster.jpg, extrafanart-N.jpg) so they stay
+// inspectable and individually repairable.
+//
+// Poster/ExtraFanart carry image bytes in memory. They are still serialized
+// to JSON for backward compatibility with entries written by older versions
+// (images embedded as base64); new writes keep the JSON metadata-only.
 type CacheEntry struct {
 	CachedAt    time.Time             `json:"cached_at"`
 	Detail      *javdbapi.VideoDetail `json:"detail"`
@@ -33,12 +41,19 @@ func New(dir string) *Cache {
 	return &Cache{dir: dir}
 }
 
-func (c *Cache) path(movieCode string) string {
-	return filepath.Join(c.dir, SanitizeName(code.Normalize(movieCode))+".json")
+func (c *Cache) base(movieCode string) string {
+	return filepath.Join(c.dir, SanitizeName(code.Normalize(movieCode)))
 }
 
-// Load reads a cached entry. Missing/corrupt entries return (nil, nil) so
-// the caller falls back to a live scrape.
+func (c *Cache) path(movieCode string) string { return c.base(movieCode) + ".json" }
+
+func (c *Cache) imagePath(movieCode, name string) string {
+	return filepath.Join(c.base(movieCode), name)
+}
+
+// Load reads a cached entry: metadata from JSON, images from raw files.
+// Legacy entries with base64-embedded images are still honored.
+// Missing/corrupt entries return nil so the caller falls back to a live scrape.
 func (c *Cache) Load(movieCode string) *CacheEntry {
 	data, err := os.ReadFile(c.path(movieCode))
 	if err != nil {
@@ -48,19 +63,64 @@ func (c *Cache) Load(movieCode string) *CacheEntry {
 	if err := json.Unmarshal(data, &entry); err != nil || entry.Detail == nil {
 		return nil
 	}
+
+	// Raw image files take precedence over legacy embedded bytes.
+	if b, err := os.ReadFile(c.imagePath(movieCode, "poster.jpg")); err == nil {
+		entry.Poster = b
+	}
+	for i := range entry.Detail.Screenshots {
+		b, err := os.ReadFile(c.imagePath(movieCode, fmt.Sprintf("extrafanart-%d.jpg", i)))
+		if err != nil {
+			continue
+		}
+		for len(entry.ExtraFanart) <= i {
+			entry.ExtraFanart = append(entry.ExtraFanart, nil)
+		}
+		entry.ExtraFanart[i] = b
+	}
 	return &entry
 }
 
-// Store writes the entry atomically. Cache failures are non-fatal.
+// Store writes metadata (JSON) and raw image files atomically.
+// Cache failures are non-fatal.
 func (c *Cache) Store(movieCode string, entry *CacheEntry) error {
 	if err := os.MkdirAll(c.dir, 0755); err != nil {
 		return err
 	}
-	data, err := json.Marshal(entry)
+
+	// Images as raw files.
+	if ValidImage(entry.Poster) || len(entry.ExtraFanart) > 0 {
+		imgDir := c.base(movieCode)
+		if err := os.MkdirAll(imgDir, 0755); err != nil {
+			return err
+		}
+		if ValidImage(entry.Poster) {
+			if err := atomicWriteFile(c.imagePath(movieCode, "poster.jpg"), entry.Poster); err != nil {
+				return err
+			}
+		}
+		for i, b := range entry.ExtraFanart {
+			if !ValidImage(b) {
+				continue
+			}
+			name := fmt.Sprintf("extrafanart-%d.jpg", i)
+			if err := atomicWriteFile(c.imagePath(movieCode, name), b); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Metadata-only JSON (image bytes live in the files above).
+	meta := CacheEntry{CachedAt: entry.CachedAt, Detail: entry.Detail}
+	data, err := json.Marshal(meta)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(c.dir, ".capture-cache-*")
+	return atomicWriteFile(c.path(movieCode), data)
+}
+
+func atomicWriteFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".capture-cache-*")
 	if err != nil {
 		return err
 	}
@@ -73,7 +133,7 @@ func (c *Cache) Store(movieCode string, entry *CacheEntry) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, c.path(movieCode))
+	return os.Rename(tmpName, path)
 }
 
 // ValidImage reports whether data is a fully decodable image (guards against

@@ -9,7 +9,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
 - **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
-- **Caching**: Caches successful scrapes (metadata + cover + screenshots) per code under `/tmp/capture`; validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
+- **Caching**: Caches successful scrapes per code under `/tmp/capture` — metadata in `{CODE}.json`, images as raw files in `{CODE}/` (poster.jpg, extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
