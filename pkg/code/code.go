@@ -1,4 +1,4 @@
-package main
+package code
 
 import (
 	"regexp"
@@ -23,9 +23,9 @@ var codePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(\d{6}[-_]\d{2,3})\b`), // 1pondo/caribbean style: 010120_001
 }
 
-// extractCodeFromFilename pulls a movie code out of a file name.
+// Extract pulls a movie code out of a file name.
 // Returns "" when nothing recognizable is found.
-func extractCodeFromFilename(filename string) string {
+func Extract(filename string) string {
 	// Strip extension so trailing numbers in ".mp4" etc. can't interfere.
 	if i := strings.LastIndex(filename, "."); i > 0 {
 		filename = filename[:i]
@@ -44,17 +44,17 @@ func extractCodeFromFilename(filename string) string {
 	return ""
 }
 
-// normalizeCode canonicalizes a code for comparison (upper case, "-" only).
-func normalizeCode(code string) string {
+// Normalize canonicalizes a code for comparison (upper case, "-" only).
+func Normalize(code string) string {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	code = strings.ReplaceAll(code, "_", "-")
 	return code
 }
 
-// codesMatch reports whether two codes refer to the same movie.
+// Match reports whether two codes refer to the same movie.
 // FC2-1234567 and FC2-PPV-1234567 are treated as equal.
-func codesMatch(a, b string) bool {
-	a, b = normalizeCode(a), normalizeCode(b)
+func Match(a, b string) bool {
+	a, b = Normalize(a), Normalize(b)
 	if a == b {
 		return true
 	}

@@ -10,6 +10,3 @@ output
 
 # agent
 .pi
-
-# local-only tests (not reviewed, kept out of the repo)
-*_test.go

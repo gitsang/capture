@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"context"
@@ -8,25 +8,31 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/RPbro/javdbapi"
+
+	"github.com/gitsang/capture/pkg/cache"
+	"github.com/gitsang/capture/pkg/code"
+	"github.com/gitsang/capture/pkg/limit"
 )
 
 // Client wraps the javdbapi SDK plus a shared limiter used for image
 // downloads, so every outbound request (API + images) honors --interval.
 type Client struct {
 	api     *javdbapi.Client
-	limiter *Limiter
+	limiter *limit.Limiter
 	http    *http.Client
 }
 
-// NewClient builds the SDK client. Retry/backoff and API rate limiting are
+// New builds the SDK client. Retry/backoff and API rate limiting are
 // configured inside the SDK (shared budget across all its requests).
 // proxyURL (optional) routes both API and image requests through a proxy;
 // insecure skips TLS certificate verification (useful with MITM proxies).
-func NewClient(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool) (*Client, error) {
-	limiter := NewLimiter(interval)
+func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool) (*Client, error) {
+	limiter := limit.New(interval)
 
 	rps := 1.0
 	if interval > 0 {
@@ -102,24 +108,24 @@ func sdkHTTPClient(insecure bool, proxyURL string) *http.Client {
 }
 
 // SearchByCode finds the movie with the exact code and fetches its detail page.
-func (c *Client) SearchByCode(ctx context.Context, code string) (*javdbapi.VideoDetail, error) {
-	page, err := c.api.Search(ctx, javdbapi.SearchQuery{Keyword: code})
+func (c *Client) SearchByCode(ctx context.Context, movieCode string) (*javdbapi.VideoDetail, error) {
+	page, err := c.api.Search(ctx, javdbapi.SearchQuery{Keyword: movieCode})
 	if err != nil {
 		if errors.Is(err, javdbapi.ErrEmptyResult) || errors.Is(err, javdbapi.ErrNotFound) {
-			return nil, fmt.Errorf("no results for %s", code)
+			return nil, fmt.Errorf("no results for %s", movieCode)
 		}
 		return nil, err
 	}
 
 	var summary *javdbapi.VideoSummary
 	for i := range page.Items {
-		if codesMatch(page.Items[i].Code, code) {
+		if code.Match(page.Items[i].Code, movieCode) {
 			summary = &page.Items[i]
 			break
 		}
 	}
 	if summary == nil {
-		return nil, fmt.Errorf("no exact match for %s in %d results", code, len(page.Items))
+		return nil, fmt.Errorf("no exact match for %s in %d results", movieCode, len(page.Items))
 	}
 
 	return c.api.Detail(ctx, summary.ID)
@@ -156,7 +162,7 @@ func (c *Client) DownloadImageBytes(ctx context.Context, url string, retryBase t
 	if err != nil {
 		return nil, err
 	}
-	if !validImage(data) {
+	if !cache.ValidImage(data) {
 		return nil, fmt.Errorf("downloaded data is not a complete image: %s", url)
 	}
 	return data, nil
@@ -169,7 +175,7 @@ func (c *Client) DownloadImage(ctx context.Context, url, path string, retryBase 
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, data, 0644)
+	return AtomicWrite(path, data, 0644)
 }
 
 func (c *Client) getBytesOnce(ctx context.Context, url string) ([]byte, error) {
@@ -189,4 +195,26 @@ func (c *Client) getBytesOnce(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// AtomicWrite writes data to path via temp file + rename so readers never
+// observe a partially written file.
+func AtomicWrite(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".capture-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

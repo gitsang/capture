@@ -1,4 +1,4 @@
-package main
+package limit
 
 import (
 	"context"
@@ -15,7 +15,7 @@ type Limiter struct {
 	last     time.Time
 }
 
-func NewLimiter(interval time.Duration) *Limiter {
+func New(interval time.Duration) *Limiter {
 	return &Limiter{interval: interval}
 }
 

@@ -1,4 +1,4 @@
-package main
+package cache
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/RPbro/javdbapi"
+
+	"github.com/gitsang/capture/pkg/code"
 )
 
 // CacheEntry is one cached scrape result, stored as {cache-dir}/{CODE}.json.
@@ -27,18 +29,18 @@ type Cache struct {
 	dir string
 }
 
-func NewCache(dir string) *Cache {
+func New(dir string) *Cache {
 	return &Cache{dir: dir}
 }
 
-func (c *Cache) path(code string) string {
-	return filepath.Join(c.dir, sanitizeName(normalizeCode(code))+".json")
+func (c *Cache) path(movieCode string) string {
+	return filepath.Join(c.dir, SanitizeName(code.Normalize(movieCode))+".json")
 }
 
 // Load reads a cached entry. Missing/corrupt entries return (nil, nil) so
 // the caller falls back to a live scrape.
-func (c *Cache) Load(code string) *CacheEntry {
-	data, err := os.ReadFile(c.path(code))
+func (c *Cache) Load(movieCode string) *CacheEntry {
+	data, err := os.ReadFile(c.path(movieCode))
 	if err != nil {
 		return nil
 	}
@@ -50,7 +52,7 @@ func (c *Cache) Load(code string) *CacheEntry {
 }
 
 // Store writes the entry atomically. Cache failures are non-fatal.
-func (c *Cache) Store(code string, entry *CacheEntry) error {
+func (c *Cache) Store(movieCode string, entry *CacheEntry) error {
 	if err := os.MkdirAll(c.dir, 0755); err != nil {
 		return err
 	}
@@ -71,12 +73,12 @@ func (c *Cache) Store(code string, entry *CacheEntry) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, c.path(code))
+	return os.Rename(tmpName, c.path(movieCode))
 }
 
-// validImage reports whether data is a fully decodable image (guards against
+// ValidImage reports whether data is a fully decodable image (guards against
 // truncated downloads and HTML error pages saved as .jpg).
-func validImage(data []byte) bool {
+func ValidImage(data []byte) bool {
 	if len(data) == 0 {
 		return false
 	}
@@ -84,18 +86,18 @@ func validImage(data []byte) bool {
 	return err == nil
 }
 
-// validImageFile checks an on-disk image for completeness.
-func validImageFile(path string) bool {
+// ValidImageFile checks an on-disk image for completeness.
+func ValidImageFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	return validImage(data)
+	return ValidImage(data)
 }
 
-// validNFOFile checks the NFO exists, is non-empty and looks like our XML
+// ValidNFOFile checks the NFO exists, is non-empty and looks like our XML
 // (starts with the XML declaration and closes the <movie> element).
-func validNFOFile(path string) bool {
+func ValidNFOFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
 		return false
@@ -104,8 +106,8 @@ func validNFOFile(path string) bool {
 	return strings.HasPrefix(s, "<?xml") && strings.HasSuffix(s, "</movie>")
 }
 
-// sanitizeName makes an actor/tag/code safe to use as a single path segment.
-func sanitizeName(name string) string {
+// SanitizeName makes an actor/tag/code safe to use as a single path segment.
+func SanitizeName(name string) string {
 	name = strings.TrimSpace(name)
 	repl := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "-",
 		"\"", "-", "<", "-", ">", "-", "|", "-", "\x00", "")

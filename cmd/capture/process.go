@@ -11,8 +11,13 @@ import (
 	"time"
 
 	"github.com/RPbro/javdbapi"
-	"github.com/spf13/cobra"
+
+	"github.com/gitsang/capture/pkg/cache"
+	"github.com/gitsang/capture/pkg/client"
+	"github.com/gitsang/capture/pkg/code"
 )
+
+var videoExts = []string{".mp4", ".mkv", ".wmv", ".avi"}
 
 // VideoFile represents a video file found during scanning
 type VideoFile struct {
@@ -58,107 +63,7 @@ type NFOActor struct {
 	Role string `xml:"role"`
 }
 
-var (
-	inputDir      string
-	outputDir     string
-	cacheDir      string
-	force         bool
-	proxyURL      string
-	insecure      bool
-	interval      time.Duration
-	retryBase     time.Duration
-	retryAttempts int
-
-	videoExts = []string{".mp4", ".mkv", ".wmv", ".avi"}
-)
-
-var rootCmd = &cobra.Command{
-	Use:   "capture",
-	Short: "Capture - Organize video files with metadata",
-	Long: `Capture is a command-line tool that scans directories for video files,
-extracts movie codes from filenames, fetches metadata, and organizes
-files into properly structured folders with NFO files and cover images.
-
-Output layout:
-  {output}/video/CODE/          video + CODE.nfo + poster.jpg + fanart.jpg
-                                + thumb.jpg + extrafanart/extrafanart-N.jpg
-  {output}/actor/<name>/CODE    symlink to the video folder
-  {output}/tag/<name>/CODE      symlink to the video folder`,
-	Run: runCapture,
-}
-
-func init() {
-	rootCmd.Flags().StringVarP(&inputDir, "input", "i", ".", "Input directory to scan for video files")
-	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
-	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
-	rootCmd.Flags().BoolVar(&force, "force", false, "Ignore cached results and re-scrape")
-	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
-	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
-	rootCmd.Flags().DurationVar(&interval, "interval", time.Minute, "Minimum interval between HTTP requests (0 disables)")
-	rootCmd.Flags().DurationVar(&retryBase, "retry-base", time.Minute, "Initial retry backoff delay (doubles each retry)")
-	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
-}
-
-func main() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runCapture(cmd *cobra.Command, args []string) {
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	fmt.Printf("Starting Capture\n")
-	fmt.Printf("Input directory: %s\n", inputDir)
-	fmt.Printf("Output directory: %s\n", outputDir)
-	fmt.Printf("Cache directory: %s (force=%v)\n", cacheDir, force)
-	fmt.Printf("Request interval: %s, retry: %d attempts from %s (exponential)\n\n", interval, retryAttempts, retryBase)
-
-	if retryAttempts < 1 {
-		retryAttempts = 1
-	}
-
-	// Create output directory if it doesn't exist
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create output directory: %v\n", err)
-		return
-	}
-	absOutput, err := filepath.Abs(outputDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to resolve output directory: %v\n", err)
-		return
-	}
-
-	// Scan for video files (output directory is skipped)
-	fmt.Println("Scanning for video files...")
-	videoFiles, err := scanVideoFiles(inputDir, absOutput)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to scan video files: %v\n", err)
-		return
-	}
-	fmt.Printf("Found %d video files\n\n", len(videoFiles))
-
-	client, err := NewClient(interval, retryBase, retryAttempts, proxyURL, insecure)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
-		return
-	}
-	cache := NewCache(cacheDir)
-
-	for i, video := range videoFiles {
-		fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(videoFiles), video.Filename)
-		processVideo(ctx, client, cache, video)
-		fmt.Println()
-	}
-
-	fmt.Println("Processing complete!")
-}
-
-func processVideo(ctx context.Context, client *Client, cache *Cache, video VideoFile) {
+func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, force bool, video VideoFile) {
 	if video.Code == "" {
 		fmt.Printf("  ⚠️  No code found in filename, skipping\n")
 		return
@@ -177,7 +82,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	var extraFanart [][]byte
 
 	if !force {
-		if entry := cache.Load(video.Code); entry != nil {
+		if entry := c.Load(video.Code); entry != nil {
 			detail = entry.Detail
 			poster = entry.Poster
 			extraFanart = entry.ExtraFanart
@@ -186,7 +91,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	}
 
 	if detail == nil {
-		d, err := client.SearchByCode(ctx, video.Code)
+		d, err := api.SearchByCode(ctx, video.Code)
 		if err != nil {
 			fmt.Printf("  ❌ Failed to fetch movie data: %v\n", err)
 			return
@@ -196,7 +101,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 
 		// Download cover into memory for caching (poster doubles as fanart/thumb).
 		if url := detail.Summary.CoverURL; url != "" {
-			p, err := client.DownloadImageBytes(ctx, url, retryBase, retryAttempts)
+			p, err := api.DownloadImageBytes(ctx, url, retryBase, retryAttempts)
 			if err != nil {
 				fmt.Printf("  ⚠️  Failed to download cover: %v\n", err)
 			} else {
@@ -212,7 +117,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			var b []byte
 			if shot.FullURL != "" {
 				var err error
-				b, err = client.DownloadImageBytes(ctx, shot.FullURL, retryBase, retryAttempts)
+				b, err = api.DownloadImageBytes(ctx, shot.FullURL, retryBase, retryAttempts)
 				if err != nil {
 					fmt.Printf("  ⚠️  Failed to download extrafanart-%d: %v\n", i, err)
 					b = nil
@@ -226,8 +131,8 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			fmt.Printf("  🖼️  Fetched %d extrafanart images\n", fetched)
 		}
 
-		entry := &CacheEntry{CachedAt: time.Now(), Detail: detail, Poster: poster, ExtraFanart: extraFanart}
-		if err := cache.Store(video.Code, entry); err != nil {
+		entry := &cache.CacheEntry{CachedAt: time.Now(), Detail: detail, Poster: poster, ExtraFanart: extraFanart}
+		if err := c.Store(video.Code, entry); err != nil {
 			fmt.Printf("  ⚠️  Failed to write cache: %v\n", err)
 		}
 	}
@@ -239,7 +144,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	}
 
 	// 3. NFO: regenerate when missing or incomplete.
-	if validNFOFile(nfoPath) {
+	if cache.ValidNFOFile(nfoPath) {
 		fmt.Printf("  📄 NFO already complete\n")
 	} else if err := createNFOFile(nfoPath, video.Code, detail); err != nil {
 		fmt.Printf("  ⚠️  Failed to create NFO file: %v\n", err)
@@ -254,11 +159,11 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 		{"fanart", fanartPath},
 		{"thumb", filepath.Join(movieFolder, "thumb.jpg")},
 	} {
-		if validImageFile(img.path) {
+		if cache.ValidImageFile(img.path) {
 			fmt.Printf("  🖼️  %s.jpg already complete\n", img.name)
 			continue
 		}
-		if validImage(poster) {
+		if cache.ValidImage(poster) {
 			if err := os.WriteFile(img.path, poster, 0644); err != nil {
 				fmt.Printf("  ⚠️  Failed to write %s.jpg: %v\n", img.name, err)
 			} else {
@@ -267,7 +172,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			continue
 		}
 		if url := detail.Summary.CoverURL; url != "" {
-			if err := client.DownloadImage(ctx, url, img.path, retryBase, retryAttempts); err != nil {
+			if err := api.DownloadImage(ctx, url, img.path, retryBase, retryAttempts); err != nil {
 				fmt.Printf("  ⚠️  Failed to download %s.jpg: %v\n", img.name, err)
 			} else {
 				fmt.Printf("  🖼️  Downloaded %s.jpg\n", img.name)
@@ -286,10 +191,10 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 			restored, downloaded := 0, 0
 			for i, shot := range detail.Screenshots {
 				p := filepath.Join(extraDir, fmt.Sprintf("extrafanart-%d.jpg", i))
-				if validImageFile(p) {
+				if cache.ValidImageFile(p) {
 					continue
 				}
-				if i < len(extraFanart) && validImage(extraFanart[i]) {
+				if i < len(extraFanart) && cache.ValidImage(extraFanart[i]) {
 					if err := os.WriteFile(p, extraFanart[i], 0644); err == nil {
 						restored++
 						continue
@@ -298,7 +203,7 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 				if shot.FullURL == "" {
 					continue
 				}
-				if err := client.DownloadImage(ctx, shot.FullURL, p, retryBase, retryAttempts); err != nil {
+				if err := api.DownloadImage(ctx, shot.FullURL, p, retryBase, retryAttempts); err != nil {
 					fmt.Printf("  ⚠️  Failed to download extrafanart-%d: %v\n", i, err)
 				} else {
 					downloaded++
@@ -331,12 +236,12 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 	// 6. Symlinks for every actor and tag.
 	linkCount := 0
 	for _, actor := range detail.Actors {
-		if createIndexSymlink("actor", actor.Name, video.Code, movieFolder) {
+		if createIndexSymlink(outputDir, "actor", actor.Name, video.Code, movieFolder) {
 			linkCount++
 		}
 	}
 	for _, tag := range detail.Tags {
-		if createIndexSymlink("tag", tag.Name, video.Code, movieFolder) {
+		if createIndexSymlink(outputDir, "tag", tag.Name, video.Code, movieFolder) {
 			linkCount++
 		}
 	}
@@ -345,8 +250,8 @@ func processVideo(ctx context.Context, client *Client, cache *Cache, video Video
 
 // createIndexSymlink links {output}/{kind}/{name}/{CODE} -> movieFolder.
 // Returns true when a new link was created.
-func createIndexSymlink(kind, name, code, movieFolder string) bool {
-	name = sanitizeName(name)
+func createIndexSymlink(outputDir, kind, name, movieCode, movieFolder string) bool {
+	name = cache.SanitizeName(name)
 	if name == "" {
 		return false
 	}
@@ -355,7 +260,7 @@ func createIndexSymlink(kind, name, code, movieFolder string) bool {
 		fmt.Printf("  ⚠️  Failed to create %s dir %s: %v\n", kind, dir, err)
 		return false
 	}
-	link := filepath.Join(dir, code)
+	link := filepath.Join(dir, movieCode)
 
 	// Relative target: {output}/{kind}/{name}/CODE -> ../../video/CODE,
 	// so the whole output tree can be moved/renamed without breaking links.
@@ -420,7 +325,7 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 		videoFiles = append(videoFiles, VideoFile{
 			Path:     path,
 			Filename: filename,
-			Code:     extractCodeFromFilename(filename),
+			Code:     code.Extract(filename),
 		})
 		return nil
 	})
@@ -428,7 +333,7 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 	return videoFiles, err
 }
 
-func createNFOFile(nfoPath, code string, detail *javdbapi.VideoDetail) error {
+func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail) error {
 	s := detail.Summary
 
 	year, date := "", ""
@@ -454,7 +359,7 @@ func createNFOFile(nfoPath, code string, detail *javdbapi.VideoDetail) error {
 		label = detail.Series.Name
 	}
 
-	fullTitle := fmt.Sprintf("<![CDATA[%s-%s]]>", code, s.Title)
+	fullTitle := fmt.Sprintf("<![CDATA[%s-%s]]>", movieCode, s.Title)
 	plot := fmt.Sprintf("<![CDATA[%s]]>", s.Title)
 	if s.Score != nil {
 		plot = fmt.Sprintf("<![CDATA[%s\nScore: %.2f (%d votes)]]>", s.Title, s.Score.Value, s.Score.Count)
@@ -478,12 +383,12 @@ func createNFOFile(nfoPath, code string, detail *javdbapi.VideoDetail) error {
 		Fanart:        "fanart.jpg",
 		Maker:         maker,
 		Label:         label,
-		Num:           strings.ToLower(code),
+		Num:           strings.ToLower(movieCode),
 		Premiered:     date,
 		ReleaseDate:   date,
 		Release:       date,
 		Cover:         s.CoverURL,
-		Website:       fmt.Sprintf("https://www.javdatabase.com/movies/%s", strings.ToLower(code)),
+		Website:       fmt.Sprintf("https://www.javdatabase.com/movies/%s", strings.ToLower(movieCode)),
 	}
 	for _, tag := range detail.Tags {
 		nfo.Genre = append(nfo.Genre, tag.Name)
@@ -505,27 +410,7 @@ func createNFOFile(nfoPath, code string, detail *javdbapi.VideoDetail) error {
 	// DOS line endings, as expected by some media servers (debug branch).
 	xmlContent = strings.ReplaceAll(xmlContent, "\n", "\r\n")
 
-	return atomicWrite(nfoPath, []byte(xmlContent), 0644)
-}
-
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".capture-tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, perm); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return client.AtomicWrite(nfoPath, []byte(xmlContent), 0644)
 }
 
 func moveFile(src, dst string) error {

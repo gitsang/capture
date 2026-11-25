@@ -10,7 +10,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
 - **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
 - **Caching**: Caches successful scrapes (metadata + cover + screenshots) per code under `/tmp/capture`; validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
-- **Rate Limiting & Retry**: Configurable minimum request interval (default 1m) and exponential-backoff retry (default 1m base, 5 attempts)
+- **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
 - **File Management**: Renames and moves video files to organized folders
@@ -54,7 +54,7 @@ If you prefer to build from source:
 git clone https://github.com/gitsang/capture.git
 cd capture
 go mod tidy
-go build -o capture
+go build -o capture ./cmd/capture
 ```
 
 ### 2.4 Verify Downloads (Optional)
@@ -92,8 +92,8 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `--force`: Ignore cached results and re-scrape
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
-- `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 1m; `0` disables)
-- `--retry-base`: Initial retry backoff delay, doubles each retry (default: 1m)
+- `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 10s; `0` disables)
+- `--retry-base`: Initial retry backoff delay, doubles each retry (default: 10s)
 - `--retry-attempts`: Maximum attempts per request (default: 5; `1` disables retries)
 
 ### 3.3 Example
