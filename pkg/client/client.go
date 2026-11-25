@@ -195,9 +195,22 @@ func (c *Client) fetchBytes(ctx context.Context, url string, retryBase time.Dura
 		if lastErr == nil {
 			return data, nil
 		}
+		var pe *permanentError
+		if errors.As(lastErr, &pe) {
+			// 403/404 etc: retrying the same URL cannot succeed.
+			return nil, lastErr
+		}
 	}
 	return nil, lastErr
 }
+
+// permanentError marks HTTP statuses that retrying cannot fix (403 from the
+// CDN's edge ACL or a missing object, 404, 410). Transient statuses
+// (429/5xx) and network errors keep the exponential-backoff treatment.
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+func (e *permanentError) Unwrap() error { return e.err }
 
 // DownloadImageBytes fetches an image and verifies it decodes fully.
 func (c *Client) DownloadImageBytes(ctx context.Context, url string, retryBase time.Duration, retryAttempts int) ([]byte, error) {
@@ -235,7 +248,13 @@ func (c *Client) getBytesOnce(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+		switch resp.StatusCode {
+		case http.StatusForbidden, http.StatusNotFound, http.StatusGone,
+			http.StatusUnauthorized, http.StatusBadRequest:
+			return nil, &permanentError{err: err}
+		}
+		return nil, err
 	}
 	return io.ReadAll(resp.Body)
 }
