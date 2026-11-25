@@ -6,9 +6,11 @@ A command-line tool that scans directories for video files, extracts movie codes
 
 - **Recursive Directory Scanning**: Scans input directory recursively for video files
 - **Video Format Support**: Supports mp4, mkv, wmv, avi video formats
-- **Code Extraction**: Automatically extracts movie codes (like ABCD-180) from filenames using regex
+- **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
-- **File Organization**: Creates organized folder structure with uppercase code names
+- **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
+- **Caching**: Caches successful scrapes (metadata + cover) per code under `/tmp/capture`; validates on-disk NFO/JPG completeness and repairs from cache; `--force` bypasses the cache
+- **Rate Limiting & Retry**: Configurable minimum request interval (default 1m) and exponential-backoff retry (default 1m base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
 - **Cover Download**: Downloads movie cover images as poster.jpg and fanart.jpg
 - **File Management**: Renames and moves video files to organized folders
@@ -84,8 +86,13 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 
 ### 3.2 Command Line Options
 
-- `-i, --input`: Input directory to scan for video files (default: current directory)
+- `-i, --input`: Input directory to scan for video files (default: current directory). The output directory is always skipped during scanning.
 - `-o, --output`: Output directory for organized files (default: ./output)
+- `--cache-dir`: Directory for cached scrape results, one JSON file per code (default: /tmp/capture)
+- `--force`: Ignore cached results and re-scrape
+- `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 1m; `0` disables)
+- `--retry-base`: Initial retry backoff delay, doubles each retry (default: 1m)
+- `--retry-attempts`: Maximum attempts per request (default: 5; `1` disables retries)
 
 ### 3.3 Example
 
@@ -97,27 +104,33 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 ## 4. How It Works
 
 1. **Scanning**: Recursively scans the input directory for video files with supported extensions
-2. **Code Extraction**: Uses regex pattern `([A-Z]+-\d+)` to extract codes like "ABCD-180" from filenames
-3. **Metadata Fetching**: Calls `client.SearchByCode()` to get movie data from javdb
-4. **Folder Creation**: Creates folders named after the codes (uppercase, e.g., `ABCD-180/`)
-5. **NFO Creation**: Generates XML NFO files with movie metadata
-6. **Image Download**: Downloads cover images as poster.jpg and fanart.jpg
-7. **File Moving**: Renames video files to match codes and moves them to respective folders
+2. **Code Extraction**: Case-insensitive patterns for standard codes (`ABCD-180`), FC2 (`FC2-PPV-1234567`, `fc2-1234567`), multi-segment codes (`T28-123`, `1Pondo-010120-001`) and date-style ids (`010120_001`); results are normalized to uppercase
+3. **Metadata Fetching**: Cache lookup first (unless `--force`); otherwise searches javdb for an exact code match and fetches the detail page, then stores metadata + cover bytes in the cache
+4. **Integrity Checks**: Existing NFO/JPG files are validated (XML well-formedness, full image decode); incomplete files are repaired from cache or re-downloaded
+5. **Folder Creation**: Creates `output/video/CODE/`
+6. **NFO Creation**: Generates XML NFO files with movie metadata (maker, director and duration when available)
+7. **Image Download**: Downloads the cover as poster.jpg and fanart.jpg
+8. **File Moving**: Renames video files to match codes and moves them into `output/video/CODE/`
+9. **Index Symlinks**: For every actor and tag, creates `output/actor/<name>/CODE` and `output/tag/<name>/CODE` symlinks pointing at the video folder
 
 ## 5. Output Structure
 
 ```
 output/
-├── ABCD-180/
-│   ├── ABCD-180.mp4          # Renamed video file
-│   ├── ABCD-180.nfo          # Movie metadata
-│   ├── poster.jpg            # Cover image
-│   └── fanart.jpg            # Fanart image
-└── ANOTHER-123/
-    ├── ANOTHER-123.mkv
-    ├── ANOTHER-123.nfo
-    ├── poster.jpg
-    └── fanart.jpg
+├── video/
+│   ├── ABCD-180/
+│   │   ├── ABCD-180.mp4      # Renamed video file
+│   │   ├── ABCD-180.nfo      # Movie metadata
+│   │   ├── poster.jpg        # Cover image
+│   │   └── fanart.jpg        # Fanart image
+│   └── FC2-PPV-1234567/
+│       └── ...
+├── actor/
+│   └── 女優名/
+│       └── ABCD-180 -> /abs/path/output/video/ABCD-180   # symlink
+└── tag/
+    └── タグ名/
+        └── ABCD-180 -> /abs/path/output/video/ABCD-180   # symlink
 ```
 
 ## 6. NFO File Content
@@ -141,18 +154,20 @@ The generated NFO files include:
 
 ## 8. Code Pattern Recognition
 
-The tool recognizes movie codes in the following format:
+Matching is case-insensitive; output folder names are uppercase:
 
-- Pattern: `[A-Z]+-\d+`
-- Examples: `ABCD-180`, `HHHHHH-123`, `XYZ-456`
-- Case insensitive in filename, but output folders are uppercase
+- Standard: `ABCD-180`, `ssni-123` → `SSNI-123`
+- FC2: `fc2-ppv-1234567`, `FC2PPV-1234567`, `fc2-1234567` → `FC2-PPV-1234567`
+- Multi-segment: `T28-123`, `3DSVR-123`, `1Pondo-010120-001`
+- Date-style (1pondo/caribbean): `010120_001` → `010120-001`
 
 ## 9. Error Handling
 
 - Skips files without recognizable codes
 - Continues processing other files if one fails
 - Provides detailed progress and error messages
-- Handles network timeouts for image downloads
+- Retries transient failures with exponential backoff (honors `Retry-After`)
+- Writes NFO/images/cache atomically; truncated files are detected and repaired on the next run
 
 ## 10. Example Output
 

@@ -1,6 +1,12 @@
+# data
 *.mp4
 *.mkv
 *.wmv
 *.avi
 
+# artifacts
+input
 output
+
+# agent
+.pi
