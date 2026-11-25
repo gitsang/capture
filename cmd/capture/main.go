@@ -52,7 +52,9 @@ func init() {
 	rootCmd.Flags().StringVar(&fix, "fix", "", "Repair the output directory instead of scanning input. Optional comma list of targets to force regeneration: nfo,fanart,thumb,extrafanart,poster,symlink (empty/missing = only create what is absent or broken)")
 	// Allow bare `--fix` (no value) to mean "missing".
 	rootCmd.Flags().Lookup("fix").NoOptDefVal = "missing"
-
+	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
+	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
+	rootCmd.Flags().StringVar(&cookie, "cookie", "", "Cookie header for javdb.com from a logged-in browser session (e.g. \"_jdb_session=...\")")
 	rootCmd.Flags().DurationVar(&interval, "interval", 10*time.Second, "Minimum interval between HTTP requests (0 disables)")
 	rootCmd.Flags().DurationVar(&retryBase, "retry-base", 10*time.Second, "Initial retry backoff delay (doubles each retry)")
 	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
