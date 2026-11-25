@@ -5,23 +5,26 @@ import (
 	"strings"
 )
 
-// codePatterns are tried in order; the first match wins.
+// Patterns are tried in fallback order; the first tier that matches wins:
 //
-//   - FC2 forms first: fc2-ppv-1234567 / fc2ppv-1234567 / fc2-1234567
-//     (with optional PPV-PPV / PPV_123 style separators).
-//   - multi-segment codes such as T28-123, 3DSVR-123, 1Pondo-010120-001
-//     (letters + digits prefix, one or more dash-separated numeric parts).
-//   - plain codes such as ABC-123, HEYZO-1234 (covers 無碼/素人 series like
-//     10musume / caribbean / 1pondo whose "numeric-only" ids are handled by
-//     the multi-segment pattern when a date segment is present).
+//  1. Standard: pure-letter prefix + number, e.g. ABC-123, MIMK-079, HEYZO-1234.
+//     Tried first so a leading date like "2020-12-12" never beats the real code.
+//  2. FC2: fc2-ppv-1234567 / fc2ppv-1234567 / fc2-1234567 (dash/space/underscore
+//     separators, optional PPV).
+//  3. Multi-segment: alphanumeric prefix with digits, e.g. T28-123, 3DSVR-123,
+//     1Pondo-010120-001.
+//  4. Date-style: 1pondo/caribbean numeric ids like 010120_001.
 //
-// All patterns are case-insensitive; the result is normalized to upper case
+// All patterns are case-insensitive; results are normalized to upper case
 // with uniform "-" separators.
-var codePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bFC2[-_ ]?(?:PPV[-_ ]?)?(\d{5,8})\b`),
-	regexp.MustCompile(`(?i)\b([A-Z0-9]{2,10}(?:-\d+){1,3})\b`),
-	regexp.MustCompile(`(?i)\b(\d{6}[-_]\d{2,3})\b`), // 1pondo/caribbean style: 010120_001
-}
+var (
+	standardPattern = regexp.MustCompile(`(?i)\b([A-Z]{2,10}-\d{2,6})\b`)
+	fc2Pattern      = regexp.MustCompile(`(?i)\bFC2[-_ ]?(?:PPV[-_ ]?)?(\d{5,8})\b`)
+	// Prefix must contain at least one letter, otherwise a bare date
+	// (2020-12-12) would masquerade as a multi-segment code.
+	multiSegmentPattern = regexp.MustCompile(`(?i)\b([A-Z0-9]*[A-Z][A-Z0-9]*(?:-\d+){1,3})\b`)
+	dateStylePattern    = regexp.MustCompile(`(?i)\b(\d{6}[-_]\d{2,3})\b`)
+)
 
 // Extract pulls a movie code out of a file name.
 // Returns "" when nothing recognizable is found.
@@ -31,14 +34,17 @@ func Extract(filename string) string {
 		filename = filename[:i]
 	}
 
-	if m := codePatterns[0].FindStringSubmatch(filename); m != nil {
+	if m := standardPattern.FindStringSubmatch(filename); m != nil {
+		return strings.ToUpper(m[1])
+	}
+	if m := fc2Pattern.FindStringSubmatch(filename); m != nil {
 		return "FC2-PPV-" + m[1]
 	}
-	for _, re := range codePatterns[1:] {
+	for _, re := range []*regexp.Regexp{multiSegmentPattern, dateStylePattern} {
 		if m := re.FindStringSubmatch(filename); m != nil {
-			code := strings.ToUpper(m[1])
-			code = strings.ReplaceAll(code, "_", "-")
-			return code
+			c := strings.ToUpper(m[1])
+			c = strings.ReplaceAll(c, "_", "-")
+			return c
 		}
 	}
 	return ""

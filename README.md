@@ -92,6 +92,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 - `--force`: Ignore cached results and re-scrape
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
+- `--cookie`: Cookie header from a logged-in javdb browser session (e.g. `"_jdb_session=..."`), attached to javdb.com requests only. Some detail pages require login; copy the cookie from your browser's DevTools (Application → Cookies → javdb.com)
 - `--interval`: Minimum interval between HTTP requests, e.g. `30s`, `2m` (default: 10s; `0` disables)
 - `--retry-base`: Initial retry backoff delay, doubles each retry (default: 10s)
 - `--retry-attempts`: Maximum attempts per request (default: 5; `1` disables retries)
@@ -162,7 +163,7 @@ The generated NFO files include:
 
 ## 8. Code Pattern Recognition
 
-Matching is case-insensitive; output folder names are uppercase:
+Matching is case-insensitive; output folder names are uppercase. Patterns are tried in fallback order — Standard → FC2 → multi-segment → date-style — so a leading date in the filename (e.g. `2020-12-12 MIMK-079 ...`) never wins over the real code:
 
 - Standard: `ABCD-180`, `ssni-123` → `SSNI-123`
 - FC2: `fc2-ppv-1234567`, `FC2PPV-1234567`, `fc2-1234567` → `FC2-PPV-1234567`

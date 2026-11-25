@@ -21,6 +21,10 @@ func TestExtract(t *testing.T) {
 		{"010120_001-1pon.mp4", "010120-001"},
 		{"010120-001-carib.mp4", "010120-001"},
 		{"1Pondo-010120-001.mp4", "1PONDO-010120-001"},
+		{"2020-12-12 MIMK-079 \u7121\u53e3\u306a\u56f3\u66f8\u59d4\u54e1\u3068\u3001\u30bb\u30c3\u30af\u30b9\u6f2c\u3051\u3002 \u4e03\u6ca2\u307f\u3042.mp4", "MIMK-079"},
+		{"2020-12-12 fc2-ppv-1234567.mp4", "FC2-PPV-1234567"},
+		{"[2021-01-01] abf-004.mp4", "ABF-004"},
+		{"2020-12-12.mp4", ""}, // bare date is not a code
 		{"random_video.mp4", ""},
 		{"movie.mp4", ""},
 	}

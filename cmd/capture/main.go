@@ -20,6 +20,7 @@ var (
 	force         bool
 	proxyURL      string
 	insecure      bool
+	cookie        string
 	interval      time.Duration
 	retryBase     time.Duration
 	retryAttempts int
@@ -47,6 +48,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&force, "force", false, "Ignore cached results and re-scrape")
 	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
 	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
+	rootCmd.Flags().StringVar(&cookie, "cookie", "", "Cookie header for javdb.com from a logged-in browser session (e.g. \"_jdb_session=...\")")
 	rootCmd.Flags().DurationVar(&interval, "interval", 10*time.Second, "Minimum interval between HTTP requests (0 disables)")
 	rootCmd.Flags().DurationVar(&retryBase, "retry-base", 10*time.Second, "Initial retry backoff delay (doubles each retry)")
 	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
@@ -95,7 +97,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("Found %d video files\n\n", len(videoFiles))
 
-	api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure)
+	api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure, cookie)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 		return

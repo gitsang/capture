@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/RPbro/javdbapi"
@@ -30,8 +31,10 @@ type Client struct {
 // New builds the SDK client. Retry/backoff and API rate limiting are
 // configured inside the SDK (shared budget across all its requests).
 // proxyURL (optional) routes both API and image requests through a proxy;
-// insecure skips TLS certificate verification (useful with MITM proxies).
-func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool) (*Client, error) {
+// insecure skips TLS certificate verification (useful with MITM proxies);
+// cookie (optional) is a browser Cookie header value (e.g. "_jdb_session=...")
+// attached to every javdb request so logged-in sessions can be reused.
+func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool, cookie string) (*Client, error) {
 	limiter := limit.New(interval)
 
 	rps := 1.0
@@ -55,8 +58,8 @@ func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, 
 	api, err := javdbapi.NewClient(javdbapi.ClientConfig{
 		BaseURL: "https://javdb.com",
 		HTTP: javdbapi.HTTPConfig{
-			ProxyURL: sdkProxyURL(insecure, proxyURL),
-			Client:   sdkHTTPClient(insecure, proxyURL),
+			ProxyURL: sdkProxyURL(insecure, proxyURL, cookie),
+			Client:   sdkHTTPClient(insecure, proxyURL, cookie),
 		},
 		Retry: javdbapi.RetryPolicy{
 			MaxAttempts: retryAttempts,
@@ -76,35 +79,63 @@ func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, 
 	return &Client{
 		api:     api,
 		limiter: limiter,
-		http:    &http.Client{Timeout: 60 * time.Second, Transport: imgTransport},
+		http: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: &cookieTransport{base: imgTransport, cookie: cookie},
+		},
 	}, nil
+}
+
+// cookieTransport attaches a Cookie header to javdb.com requests only,
+// so the session cookie is never leaked to third-party image CDNs.
+type cookieTransport struct {
+	base   http.RoundTripper
+	cookie string
+}
+
+func (t *cookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.cookie != "" && isJavdbHost(req.URL.Hostname()) {
+		req = req.Clone(req.Context())
+		req.Header.Set("Cookie", t.cookie)
+	}
+	return t.base.RoundTrip(req)
+}
+
+func isJavdbHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "javdb.com" || strings.HasSuffix(host, ".javdb.com")
 }
 
 // sdkProxyURL passes the proxy to the SDK only when it builds its own HTTP
 // client; the SDK forbids combining HTTP.Client with ProxyURL.
-func sdkProxyURL(insecure bool, proxyURL string) string {
-	if insecure {
+func sdkProxyURL(insecure bool, proxyURL, cookie string) string {
+	if insecure || cookie != "" {
 		return ""
 	}
 	return proxyURL
 }
 
 // sdkHTTPClient returns a custom HTTP client for the SDK when insecure TLS
-// is requested (the SDK's own client cannot disable verification). Returns
-// nil otherwise so the SDK builds its own client with ProxyURL applied.
-// The proxy is baked into the transport here.
-func sdkHTTPClient(insecure bool, proxyURL string) *http.Client {
-	if !insecure {
+// or a session cookie is requested (the SDK's own client supports neither).
+// Returns nil otherwise so the SDK builds its own client with ProxyURL
+// applied. Proxy and cookie are baked into the transport here.
+func sdkHTTPClient(insecure bool, proxyURL, cookie string) *http.Client {
+	if !insecure && cookie == "" {
 		return nil
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	if insecure {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	if proxyURL != "" {
 		if pu, err := url.Parse(proxyURL); err == nil {
 			tr.Proxy = http.ProxyURL(pu)
 		}
 	}
-	return &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &cookieTransport{base: tr, cookie: cookie},
+	}
 }
 
 // SearchByCode finds the movie with the exact code and fetches its detail page.
