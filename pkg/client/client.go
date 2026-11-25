@@ -37,9 +37,15 @@ type Client struct {
 func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool, cookie string) (*Client, error) {
 	limiter := limit.New(interval)
 
+	// Primary pacing is our jittered limiter (interval ±50%), applied before
+	// every API call and image download. The SDK token bucket is only a
+	// safety net at interval/3: normally its token is long refilled by the
+	// time our limiter releases a request, so it never shapes the rhythm —
+	// but if a code path ever bypasses our limiter, requests still cannot
+	// go out faster than interval/3.
 	rps := 1.0
 	if interval > 0 {
-		rps = float64(time.Second) / float64(interval)
+		rps = 3 * float64(time.Second) / float64(interval)
 	}
 
 	// Image-download HTTP client (API client is built by the SDK).
@@ -140,6 +146,9 @@ func sdkHTTPClient(insecure bool, proxyURL, cookie string) *http.Client {
 
 // SearchByCode finds the movie with the exact code and fetches its detail page.
 func (c *Client) SearchByCode(ctx context.Context, movieCode string) (*javdbapi.VideoDetail, error) {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
 	page, err := c.api.Search(ctx, javdbapi.SearchQuery{Keyword: movieCode})
 	if err != nil {
 		if errors.Is(err, javdbapi.ErrEmptyResult) || errors.Is(err, javdbapi.ErrNotFound) {
@@ -159,6 +168,9 @@ func (c *Client) SearchByCode(ctx context.Context, movieCode string) (*javdbapi.
 		return nil, fmt.Errorf("no exact match for %s in %d results", movieCode, len(page.Items))
 	}
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
 	return c.api.Detail(ctx, summary.ID)
 }
 
