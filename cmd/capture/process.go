@@ -24,6 +24,10 @@ type VideoFile struct {
 	Path     string
 	Filename string
 	Code     string
+	// Part is the split-movie disc marker (KAVR-316_A -> "A"), empty for
+	// single-file movies. It only affects the on-disk filename: a movie's
+	// parts are separate files, not separate entries.
+	Part string
 }
 
 // NFOData is the Emby/Jellyfin-style NFO layout (ported from the debug
@@ -83,10 +87,14 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 		fmt.Printf("  ⚠️  No code found in filename, skipping\n")
 		return
 	}
-	fmt.Printf("  📋 Code: %s\n", video.Code)
+	if video.Part != "" {
+		fmt.Printf("  📋 Code: %s (part %s)\n", video.Code, video.Part)
+	} else {
+		fmt.Printf("  📋 Code: %s\n", video.Code)
+	}
 
 	movieFolder := filepath.Join(outputDir, "video", video.Code)
-	newVideoPath := filepath.Join(movieFolder, video.Code+strings.ToLower(filepath.Ext(video.Path)))
+	newVideoPath := filepath.Join(movieFolder, videoFileName(video))
 
 	// 1. Get metadata: cache first (unless --no-cache), then live scrape.
 	var detail *javdbapi.VideoDetail
@@ -172,17 +180,20 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	// 2-4b. Materialize NFO + artwork (shared with --fix).
 	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, actresses, fixTargets{})
 
-	// 5. Move the video file. When the target already exists (cached rerun,
-	// duplicate source), remove the redundant source so it is not rescanned.
+	// 5. Move the video file.
+	//
+	// Only an already-moved source (same path, or the same file reached
+	// through a different route) may be deleted. Anything else that occupies
+	// the target is NOT removed: silently discarding a source whose target
+	// name happens to collide would destroy user data, and a collision here
+	// is precisely what a mismatched part suffix would cause. Keep the
+	// existing file and quarantine the newcomer so nothing is lost.
 	if _, err := os.Stat(newVideoPath); err == nil {
-		srcAbs, _ := filepath.Abs(video.Path)
-		dstAbs, _ := filepath.Abs(newVideoPath)
-		if srcAbs == dstAbs {
+		if sameFile(video.Path, newVideoPath) {
 			fmt.Printf("  📁 Video already in place: %s\n", newVideoPath)
-		} else if err := os.Remove(video.Path); err != nil {
-			fmt.Printf("  ⚠️  Target exists, failed to remove duplicate source %s: %v\n", video.Path, err)
 		} else {
-			fmt.Printf("  📁 Video already in place, removed duplicate source: %s\n", video.Path)
+			fmt.Printf("  ⚠️  Target already exists, not overwriting: %s\n", newVideoPath)
+			quarantineFailed(outputDir, video)
 		}
 	} else if err := moveFile(video.Path, newVideoPath); err != nil {
 		fmt.Printf("  ❌ Failed to move video file: %v\n", err)
@@ -366,10 +377,12 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 		}
 
 		filename := filepath.Base(path)
+		movieCode, part := code.ExtractWithPart(filename)
 		videoFiles = append(videoFiles, VideoFile{
 			Path:     path,
 			Filename: filename,
-			Code:     code.Extract(filename),
+			Code:     movieCode,
+			Part:     part,
 		})
 		return nil
 	})
@@ -469,6 +482,32 @@ func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail, actr
 	xmlContent = strings.ReplaceAll(xmlContent, "\n", "\r\n")
 
 	return client.AtomicWrite(nfoPath, []byte(xmlContent), 0644)
+}
+
+// videoFileName is the name a source takes inside the movie folder. The disc
+// marker is appended so KAVR-316_A/B never collide: without it every part
+// resolves to KAVR-316.mp4 and the parts overwrite (or, previously, deleted)
+// each other.
+func videoFileName(v VideoFile) string {
+	name := v.Code
+	if v.Part != "" {
+		name += "_" + v.Part
+	}
+	return name + strings.ToLower(filepath.Ext(v.Path))
+}
+
+// sameFile reports whether two paths are the same file on disk, so an
+// already-moved source can be recognized without deleting a real duplicate.
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 func moveFile(src, dst string) error {

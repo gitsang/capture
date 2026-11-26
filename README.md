@@ -187,19 +187,41 @@ Patterns are tried in a fixed fallback order. Higher tiers win so that noise in 
 | 4 | **Multi-segment** | alphanumeric prefix (must contain ≥1 letter) + 1–3 `-number` groups | `T28-123`, `3DSVR-123`, `1Pondo-010120-001` |
 | 5 | **Date-style** | 6 digits + `_`/`-` + 2–3 digits (1pondo/caribbean ids) | `010120_001` → `010120-001`; `123119-001-carib` → `123119-001` |
 
-### 8.2 Noise tolerance
+### 8.2 Split movies (disc markers)
+
+Multi-part releases are recognized and kept as separate files instead of
+overwriting each other:
+
+```
+KAVR-316_A.mp4 ─┐
+KAVR-316_B.mp4 ─┼─► video/KAVR-316/  KAVR-316.nfo (one shared NFO)
+KAVR-316_C.mp4 ─┘                   KAVR-316_A.mp4 / _B.mp4 / _C.mp4
+```
+
+Only an **underscore-joined single trailing letter** counts as a disc marker:
+`KAVR-316_A` → code `KAVR-316`, part `A`. Dash- and glued forms are *not*
+parts, because they name the same movie as the bare code — `SSIS-001C` and
+`ABP-123-C` are revisions of `SSIS-001`, not different discs, and splitting
+them would scatter one movie across several folders. Likewise `_4K` is a
+model tag, not a part.
+
+### 8.3 Noise tolerance
 
 - **Leading dates**: `2020-12-12 MIMK-079 ...` → `MIMK-079` (Standard wins; a bare date matches no tier — Multi-segment requires a letter in its prefix)
 - **Resolution/codec tags**: `1080p`, `720P`, `x264`, `h264`, `HEVC` are not codes (fewer than 2 letters or no digits)
 - **Prefix noise**: `720P-ABP-123` → `ABP-123`; `hhd800.com@FC2-PPV-4573738` → `FC2-PPV-4573738`
 - **Part suffixes**: `abc-123-cd1` → `ABC-123` (the `cd1` tail is outside the Standard match)
-- **Word boundaries**: all patterns anchor on `\b`, so codes embedded in longer words are not partially matched
+- **Word boundaries**: patterns anchor on `\b` at the start, so codes embedded in longer words are not partially matched. The **tail** uses a non-digit lookahead rather than `\b`, because `_` is a word character: `IPZZ-872_4K` and `KAVR-316_A` would otherwise match nothing at all. The lookahead still prevents a digit run from being read as a prefix of a longer number (`ABF-123456789` ≠ `ABF-123456`)
 
-### 8.3 Exact matching against search results
+### 8.4 Exact matching against search results
 
 Extraction only proposes a candidate; the search result must **exactly match** it after normalization (upper case, `_`→`-`). `FC2-1234567` and `FC2-PPV-1234567` are treated as equal. If nothing matches (`no exact match`), the code is retried against r18.dev (§9.1), then the file is parked in `{output}/failed/` — see §4.
 
-### 8.5 Zero-padded numbering
+### 8.5 Files without a recognizable code
+
+Left untouched in the input directory and skipped (not quarantined), so renaming the file is enough to have it picked up on the next run.
+
+### 8.6 Zero-padded numbering
 
 Older DMM releases are numbered to a fixed width (`ECR-0084`, DMM content id `h_015ecr0084r`) while filenames often drop the leading zeros (`ecr-084-1-1.mp4`). Search therefore compares the results against the code *plus its zero-padded variants*:
 
@@ -208,10 +230,6 @@ ECR-084 → ECR-084, ECR-0084, ECR-00084
 ```
 
 Padding only ever **adds** zeros, never strips them, and the prefix must stay byte-identical. This matters: `MBD-016` yields `MBD-0016`/`MBD-00016` and deliberately **not** `MBD-16`, which is an unrelated movie that javdb lists in the same result set — collapsing it by "same number after removing zeros" would silently subtitle the wrong film with the wrong cover.
-
-### 8.4 Files without a recognizable code
-
-Left untouched in the input directory and skipped (not quarantined), so renaming the file is enough to have it picked up on the next run.
 
 ## 9. Error Handling
 

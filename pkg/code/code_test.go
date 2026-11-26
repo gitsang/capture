@@ -73,6 +73,12 @@ func TestExtract(t *testing.T) {
 		{"YRNKNKJDVAJ-640A.2024.1080p.DMM.WEB-DL.AAC2.0.H.264-MTeam.mkv", "YRNKNKJDVAJ-640"},
 		// site-prefix noise
 		{"hhd800.com@FC2-PPV-4573738.mp4", "FC2-PPV-4573738"},
+		// underscore right after the number: "_" is a word character, so a
+		// trailing \b used to reject the whole match (IPZZ-872_4K, KAVR-316_A)
+		{"IPZZ-872_4K.mp4", "IPZZ-872"},
+		{"KAVR-316_A.mp4", "KAVR-316"},
+		{"abc-123_mkv.mp4", "ABC-123"},
+		{"ABP-123_C.mp4", "ABP-123"},
 	}
 	for _, c := range cases {
 		if got := Extract(c.filename); got != c.want {
@@ -136,6 +142,36 @@ func TestZeroPadCandidates(t *testing.T) {
 				t.Errorf("ZeroPadCandidates(%q) = %v, want %v", c.in, got, c.want)
 				break
 			}
+		}
+	}
+}
+
+// TestExtractWithPart covers split-movie disc markers. Only an
+// underscore-joined single trailing letter is a part: dash/glued forms name
+// the same movie as the bare code, so treating them as parts would scatter a
+// single movie across disc folders.
+func TestExtractWithPart(t *testing.T) {
+	cases := []struct {
+		filename string
+		code     string
+		part     string
+	}{
+		{"KAVR-316_A.mp4", "KAVR-316", "A"},
+		{"KAVR-316_E.mkv", "KAVR-316", "E"},
+		{"kavr-316_b.mp4", "KAVR-316", "B"},
+		// NOT parts: same movie, different naming
+		{"IPZZ-872_4K.mp4", "IPZZ-872", ""}, // marker is a model tag, 2 chars
+		{"SSIS-001C.mp4", "SSIS-001", ""},   // glued revision suffix
+		{"ABP-123-C.mp4", "ABP-123", ""},    // dash-separated revision suffix
+		{"abc-123-cd1.mp4", "ABC-123", ""},  // disc number, not a letter
+		{"ABF-004.mp4", "ABF-004", ""},
+		{"random_video.mp4", "", ""},
+	}
+	for _, c := range cases {
+		code, part := ExtractWithPart(c.filename)
+		if code != c.code || part != c.part {
+			t.Errorf("ExtractWithPart(%q) = (%q, %q), want (%q, %q)",
+				c.filename, code, part, c.code, c.part)
 		}
 	}
 }

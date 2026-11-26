@@ -23,7 +23,11 @@ import (
 var (
 	// Trailing letter suffixes are tolerated: START-281ch, ABP-123-C,
 	// SSIS-001C, YRNKMTNDVAJ-647A (suffix may be dot-separated too).
-	standardPattern = regexp.MustCompile(`(?i)\b([A-Z]{2,12}-\d{2,6})(?:[-.]?[A-Z]{1,2})?\b`)
+	// The tail is [^0-9] rather than \b: "_" is a word character, so \b
+	// would reject IPZZ-872_4K and KAVR-316_A (no boundary between digit and
+	// underscore). A non-digit lookahead keeps the digit run from being a
+	// prefix of a longer number (ABF-123456789 must not yield ABF-123456).
+	standardPattern = regexp.MustCompile(`(?i)\b([A-Z]{2,12}-\d{2,6})(?:[-.]?[A-Z]{1,2})?(?:[^0-9]|$)`)
 	fc2Pattern      = regexp.MustCompile(`(?i)\bFC2[-_ ]?(?:PPV[-_ ]?)?(\d{5,8})\b`)
 	// Prefix must contain at least one letter, otherwise a bare date
 	// (2020-12-12) would masquerade as a multi-segment code.
@@ -32,11 +36,17 @@ var (
 	// digits are allowed (476MLA095 -> MLA-095) but a leading digit run
 	// right before the letters usually is a date fragment, so only strip
 	// it when the remainder still starts with letters.
-	gluedPattern = regexp.MustCompile(`(?i)\b(\d{0,3})([A-Z]{2,12})(\d{2,6})\b`)
+	gluedPattern = regexp.MustCompile(`(?i)\b(\d{0,3})([A-Z]{2,12})(\d{2,6})(?:[^0-9]|$)`)
 	// heyzo_hd_0474_full: label + underscore-joined segments + number.
 	// Leading  only: the number is usually followed by "_full", where
 	// a trailing  would fail (underscore is a word character).
-	heyzoPattern     = regexp.MustCompile(`(?i)\bHEYZO(?:[_-][A-Z]+)*[_-](\d{3,4})`)
+	heyzoPattern = regexp.MustCompile(`(?i)\bHEYZO(?:[_-][A-Z]+)*[_-](\d{3,4})`)
+	// Split-movie disc marker: the single trailing letter in KAVR-316_A.
+	// Underscore only - neither javdb nor DMM puts "_" in a code, so it is
+	// unambiguous evidence of a local suffix. Dash-separated single letters
+	// (ABP-123-C, SSIS-001C) are NOT parts: they are indistinguishable from
+	// the glued revision suffix that names the same movie.
+	partPattern      = regexp.MustCompile(`(?i)_([A-Z])$`)
 	dateStylePattern = regexp.MustCompile(`(?i)\b(\d{6}[-_]\d{2,3})\b`)
 )
 
@@ -102,6 +112,30 @@ func ZeroPadCandidates(code string) []string {
 // maxPaddedDigits bounds zero padding. DMM's widest observed numbering is
 // 5 digits (118mbd00016); going further only costs requests.
 const maxPaddedDigits = 5
+
+// ExtractWithPart is Extract plus the split-movie disc marker, so that
+// KAVR-316_A and KAVR-316_B can be stored side by side instead of
+// overwriting each other.
+//
+// Only an underscore-joined single trailing letter counts as a part:
+// "KAVR-316_A" -> ("KAVR-316", "A"). Dash or glued forms are left alone,
+// because "SSIS-001C" / "ABP-123-C" name the same movie as "SSIS-001" and
+// treating them as parts would scatter a single movie across disc folders.
+// Returns part == "" for ordinary files.
+func ExtractWithPart(filename string) (movieCode, part string) {
+	movieCode = Extract(filename)
+	if movieCode == "" {
+		return "", ""
+	}
+	stem := filename
+	if i := strings.LastIndex(stem, "."); i > 0 {
+		stem = stem[:i]
+	}
+	if m := partPattern.FindStringSubmatch(stem); m != nil {
+		return movieCode, strings.ToUpper(m[1])
+	}
+	return movieCode, ""
+}
 
 // Normalize canonicalizes a code for comparison (upper case, "-" only).
 func Normalize(code string) string {

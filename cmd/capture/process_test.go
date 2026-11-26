@@ -469,3 +469,124 @@ func TestRemoveIndexSymlinksPrunesFolders(t *testing.T) {
 		t.Error("this movie's link should be removed")
 	}
 }
+
+// TestVideoFileName pins the on-disk naming: the disc marker survives so
+// parts of one movie cannot collide.
+func TestVideoFileName(t *testing.T) {
+	cases := []struct {
+		v    VideoFile
+		want string
+	}{
+		{VideoFile{Path: "/in/KAVR-316_A.mp4", Code: "KAVR-316", Part: "A"}, "KAVR-316_A.mp4"},
+		{VideoFile{Path: "/in/KAVR-316_B.mkv", Code: "KAVR-316", Part: "B"}, "KAVR-316_B.mkv"},
+		{VideoFile{Path: "/in/KAVR-316.MP4", Code: "KAVR-316"}, "KAVR-316.mp4"},
+	}
+	for _, c := range cases {
+		if got := videoFileName(c.v); got != c.want {
+			t.Errorf("videoFileName(%+v) = %q, want %q", c.v, got, c.want)
+		}
+	}
+}
+
+// TestPartsDoNotCollide is the regression for a data-loss bug: every part of
+// KAVR-316 used to resolve to video/KAVR-316/KAVR-316.mp4, and the "duplicate
+// source" cleanup then deleted the 2nd..Nth source file instead of keeping it.
+func TestPartsDoNotCollide(t *testing.T) {
+	base := t.TempDir()
+	in, out, cacheDir := filepath.Join(base, "in"), filepath.Join(base, "out"), filepath.Join(base, "cache")
+	for _, d := range []string{in, filepath.Join(out, "video", "KAVR-316")} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := cache.New(cacheDir)
+	cover := landscapeJPEG(t, 100, 60)
+	d := testDetail()
+	d.Summary.Code = "KAVR-316"
+	if err := c.Store("KAVR-316", &cache.CacheEntry{
+		CachedAt: time.Now(), Detail: d, Poster: cover, ExtraFanart: [][]byte{cover},
+		ActressesResolved: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := []string{"A", "B", "C"}
+	for _, p := range parts {
+		path := filepath.Join(in, "KAVR-316_"+p+".mp4")
+		if err := os.WriteFile(path, []byte("content-"+p), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// nil api: fully offline, cache suffices.
+		processVideo(context.Background(), nil, c, out, false, VideoFile{
+			Path: path, Filename: filepath.Base(path), Code: "KAVR-316", Part: p,
+		})
+	}
+
+	// every part must exist as its own file, with its own content
+	for _, p := range parts {
+		got, err := os.ReadFile(filepath.Join(out, "video", "KAVR-316", "KAVR-316_"+p+".mp4"))
+		if err != nil {
+			t.Errorf("part %s missing: %v", p, err)
+			continue
+		}
+		if string(got) != "content-"+p {
+			t.Errorf("part %s content = %q, want %q", p, got, "content-"+p)
+		}
+	}
+	// and the sources must be gone (moved, not left behind)
+	for _, p := range parts {
+		if _, err := os.Stat(filepath.Join(in, "KAVR-316_"+p+".mp4")); !os.IsNotExist(err) {
+			t.Errorf("source for part %s was not moved", p)
+		}
+	}
+}
+
+// TestCollidingTargetIsQuarantinedNotDeleted guards the other half of the
+// same bug: when a different source already occupies the target name, the
+// newcomer is parked in failed/ instead of the existing file being trusted
+// to be a duplicate.
+func TestCollidingTargetIsQuarantinedNotDeleted(t *testing.T) {
+	base := t.TempDir()
+	in, out, cacheDir := filepath.Join(base, "in"), filepath.Join(base, "out"), filepath.Join(base, "cache")
+	movieFolder := filepath.Join(out, "video", "ABF-004")
+	if err := os.MkdirAll(movieFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-existing, DIFFERENT file already sits at the target name.
+	if err := os.WriteFile(filepath.Join(movieFolder, "ABF-004.mp4"), []byte("keep-me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The cache entry omits actresses on purpose: no network is possible.
+	c := cache.New(cacheDir)
+	cover := landscapeJPEG(t, 100, 60)
+	if err := c.Store("ABF-004", &cache.CacheEntry{
+		CachedAt: time.Now(), Detail: testDetail(), Poster: cover,
+		ExtraFanart: [][]byte{cover}, ActressesResolved: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(in, "ABF-004.mp4")
+	if err := os.MkdirAll(in, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("newcomer"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	processVideo(context.Background(), nil, c, out, false, VideoFile{
+		Path: src, Filename: "ABF-004.mp4", Code: "ABF-004",
+	})
+
+	// the existing file must be untouched
+	got, err := os.ReadFile(filepath.Join(movieFolder, "ABF-004.mp4"))
+	if err != nil || string(got) != "keep-me" {
+		t.Errorf("existing target was clobbered: %q (err=%v)", got, err)
+	}
+	// and the newcomer must still exist somewhere (quarantined, not deleted)
+	if _, err := os.Stat(filepath.Join(out, "failed", "ABF-004.mp4")); err != nil {
+		t.Errorf("colliding source was not quarantined: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Error("source should have been moved out of the input dir")
+	}
+}
