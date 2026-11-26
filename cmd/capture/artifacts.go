@@ -277,6 +277,12 @@ func removeIndexSymlinks(outputDir, movieCode, movieFolderAbs string) {
 					os.Remove(p)
 				}
 			}
+			// Drop the index folder once its last link is gone, so stale
+			// actor entries (e.g. male co-stars linked by older versions)
+			// disappear from the tree instead of lingering empty.
+			if remaining, err := os.ReadDir(sub); err == nil && len(remaining) == 0 {
+				os.Remove(sub)
+			}
 		}
 	}
 }

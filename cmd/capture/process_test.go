@@ -435,3 +435,37 @@ func TestNFOActorType(t *testing.T) {
 		t.Error("unresolved NFO must omit <type>")
 	}
 }
+
+// TestRemoveIndexSymlinksPrunesFolders checks stale links are removed and
+// the emptied index folder is pruned, while other codes' links survive.
+func TestRemoveIndexSymlinksPrunesFolders(t *testing.T) {
+	out := t.TempDir()
+	movieFolder := filepath.Join(out, "video", "ABF-223")
+	otherFolder := filepath.Join(out, "video", "OTHER-001")
+	os.MkdirAll(movieFolder, 0755)
+	os.MkdirAll(otherFolder, 0755)
+
+	// actress with a link to this movie and to another movie
+	os.MkdirAll(filepath.Join(out, "actor", "女優A"), 0755)
+	os.Symlink("../../video/ABF-223", filepath.Join(out, "actor", "女優A", "ABF-223"))
+	os.Symlink("../../video/OTHER-001", filepath.Join(out, "actor", "女優A", "OTHER-001"))
+	// stale male co-star: only a link to this movie
+	os.MkdirAll(filepath.Join(out, "actor", "男優B"), 0755)
+	os.Symlink("../../video/ABF-223", filepath.Join(out, "actor", "男優B", "ABF-223"))
+
+	abs, _ := filepath.Abs(movieFolder)
+	removeIndexSymlinks(out, "ABF-223", abs)
+
+	if _, err := os.Lstat(filepath.Join(out, "actor", "男優B", "ABF-223")); !os.IsNotExist(err) {
+		t.Error("stale male link not removed")
+	}
+	if _, err := os.Stat(filepath.Join(out, "actor", "男優B")); !os.IsNotExist(err) {
+		t.Error("emptied actor folder should be pruned")
+	}
+	if _, err := os.Stat(filepath.Join(out, "actor", "女優A", "OTHER-001")); err != nil {
+		t.Error("unrelated link must survive")
+	}
+	if _, err := os.Stat(filepath.Join(out, "actor", "女優A", "ABF-223")); !os.IsNotExist(err) {
+		t.Error("this movie's link should be removed")
+	}
+}
