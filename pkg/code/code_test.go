@@ -55,29 +55,15 @@ func TestExtract(t *testing.T) {
 		{"movie2.mp4", ""},     // glued needs >=2 digits
 		{"hunter3.mp4", ""},
 		{"ABF-004-CD2.mp4", "ABF-004"},
-	}
-	for _, c := range cases {
-		if got := Extract(c.filename); got != c.want {
-			t.Errorf("Extract(%q) = %q, want %q", c.filename, got, c.want)
-		}
-	}
-}
-
-// TestExtractKnownLimitations pins down the deliberately loose edges of
-// the multi-segment tier: it accepts prefixes/digit runs outside the
-// standard tier's bounds. Extraction only proposes a candidate; the
-// exact-match check against search results filters bogus ones out.
-func TestExtractKnownLimitations(t *testing.T) {
-	cases := []struct {
-		filename string
-		want     string
-	}{
-		{"AB-1.mp4", "AB-1"},                       // 1 digit: multi-segment allows \d+
-		{"A-123.mp4", "A-123"},                     // 1 letter prefix
+		// known looseness of the multi-segment/glued fallback tiers:
+		// extraction only proposes a candidate; the exact match against
+		// search results filters bogus ones out.
+		{"AB-1.mp4", "AB-1"},                       // 1 digit
+		{"A-123.mp4", "A-123"},                     // 1-letter prefix
 		{"ABCDEFGHIJK-123.mp4", "ABCDEFGHIJK-123"}, // 11-letter prefix
 		{"ABF-123456789.mp4", "ABF-123456789"},     // 9-digit run
-		{"fc2-1234.mp4", "FC2-1234"},               // 4 digits: below FC2 tier, multi-segment picks it up
-		{"movie2023.mp4", "MOVIE-2023"},            // year-like word treated as glued code
+		{"fc2-1234.mp4", "FC2-1234"},               // below FC2 minimum, multi-segment picks it up
+		{"movie2023.mp4", "MOVIE-2023"},            // year-like word
 	}
 	for _, c := range cases {
 		if got := Extract(c.filename); got != c.want {
