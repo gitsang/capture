@@ -11,9 +11,9 @@ import (
 //     Tried first so a leading date like "2020-12-12" never beats the real code.
 //  2. FC2: fc2-ppv-1234567 / fc2ppv-1234567 / fc2-1234567 (dash/space/underscore
 //     separators, optional PPV).
-//  3. Multi-segment: alphanumeric prefix with digits, e.g. T28-123, 3DSVR-123,
+//  3. Glued: letters+digits without separator, e.g. hunter003, SSNI497.
+//  4. Multi-segment: alphanumeric prefix with digits, e.g. T28-123, 3DSVR-123,
 //     1Pondo-010120-001.
-//  4. Glued: letters+digits without separator, e.g. hunter003, START281.
 //  5. Date-style: 1pondo/caribbean numeric ids like 010120_001.
 //
 // All patterns are case-insensitive; results are normalized to upper case

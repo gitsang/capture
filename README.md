@@ -171,12 +171,35 @@ The generated NFO files include:
 
 ## 8. Code Pattern Recognition
 
-Matching is case-insensitive; output folder names are uppercase. Patterns are tried in fallback order — Standard → FC2 → multi-segment → date-style — so a leading date in the filename (e.g. `2020-12-12 MIMK-079 ...`) never wins over the real code:
+The code is extracted from the **filename only** (the extension is stripped first, so numbers in `.mp4` etc. cannot interfere). Matching is case-insensitive; extracted codes are normalized to **upper case with `-` separators** and used as folder names.
 
-- Standard: `ABCD-180`, `ssni-123` → `SSNI-123`
-- FC2: `fc2-ppv-1234567`, `FC2PPV-1234567`, `fc2-1234567` → `FC2-PPV-1234567`
-- Multi-segment: `T28-123`, `3DSVR-123`, `1Pondo-010120-001`
-- Date-style (1pondo/caribbean): `010120_001` → `010120-001`
+### 8.1 Recognition tiers (first match wins)
+
+Patterns are tried in a fixed fallback order. Higher tiers win so that noise in the filename (leading dates, resolution tags, part suffixes) never beats the real code:
+
+| # | Tier | Pattern | Examples → extracted |
+|---|------|---------|---------------------|
+| 1 | **Standard** | 2–10 letters + `-` + 2–6 digits; optionally followed by 1–2 trailing letters (dropped) | `ABF-004` → `ABF-004`; `ssni-123` → `SSNI-123`; `start-281ch` → `START-281`; `SSIS-001C` → `SSIS-001`; `ABP-123-C` → `ABP-123` |
+| 2 | **FC2** | `FC2` + optional `PPV` + 5–8 digits; separators `-`/`_`/space or none | `fc2-ppv-1234567`, `FC2PPV-1234567`, `fc2-1234567` → `FC2-PPV-1234567` |
+| 3 | **Glued** | 2–10 letters immediately followed by 2–6 digits, no separator; an optional 1–3 digit prefix is dropped | `hunter003` → `HUNTER-003`; `SSNI497` → `SSNI-497`; `476MLA095` → `MLA-095` |
+| 4 | **Multi-segment** | alphanumeric prefix (must contain ≥1 letter) + 1–3 `-number` groups | `T28-123`, `3DSVR-123`, `1Pondo-010120-001` |
+| 5 | **Date-style** | 6 digits + `_`/`-` + 2–3 digits (1pondo/caribbean ids) | `010120_001` → `010120-001`; `123119-001-carib` → `123119-001` |
+
+### 8.2 Noise tolerance
+
+- **Leading dates**: `2020-12-12 MIMK-079 ...` → `MIMK-079` (Standard wins; a bare date matches no tier — Multi-segment requires a letter in its prefix)
+- **Resolution/codec tags**: `1080p`, `720P`, `x264`, `h264`, `HEVC` are not codes (fewer than 2 letters or no digits)
+- **Prefix noise**: `720P-ABP-123` → `ABP-123`
+- **Part suffixes**: `abc-123-cd1` → `ABC-123` (the `cd1` tail is outside the Standard match)
+- **Word boundaries**: all patterns anchor on `\b`, so codes embedded in longer words are not partially matched
+
+### 8.3 Exact matching against search results
+
+Extraction only proposes a candidate; the search result must **exactly match** it after normalization (upper case, `_`→`-`). `FC2-1234567` and `FC2-PPV-1234567` are treated as equal. If nothing matches (`no exact match`), the file is parked in `{output}/failed/` — see §4.
+
+### 8.4 Files without a recognizable code
+
+Left untouched in the input directory and skipped (not quarantined), so renaming the file is enough to have it picked up on the next run.
 
 ## 9. Error Handling
 
