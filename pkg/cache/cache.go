@@ -27,6 +27,27 @@ type CacheEntry struct {
 	Detail      *javdbapi.VideoDetail `json:"detail"`
 	Poster      []byte                `json:"poster,omitempty"`
 	ExtraFanart [][]byte              `json:"extra_fanart,omitempty"`
+	// Actresses holds the actor names javdb flags female on the detail page
+	// (see client.ActressNames). Empty means "not resolved yet" - entries
+	// written by older versions and codes whose scrape failed. A set with
+	// actresses but no male co-stars is still a valid, complete result.
+	Actresses []string `json:"actresses,omitempty"`
+	// ActressesResolved distinguishes "no actress on this page" from "not
+	// looked up yet", so a resolved empty list is not re-fetched.
+	ActressesResolved bool `json:"actresses_resolved,omitempty"`
+}
+
+// ActressSet returns the cached actress names as a lookup set, plus whether
+// the entry carries a resolved actress list (false = needs a re-fetch).
+func (e *CacheEntry) ActressSet() (map[string]bool, bool) {
+	if e == nil || !e.ActressesResolved {
+		return nil, false
+	}
+	set := make(map[string]bool, len(e.Actresses))
+	for _, n := range e.Actresses {
+		set[n] = true
+	}
+	return set, true
 }
 
 type Cache struct {
@@ -121,7 +142,12 @@ func (c *Cache) Store(movieCode string, entry *CacheEntry) error {
 	}
 
 	// Metadata-only JSON (image bytes live in the files above).
-	meta := CacheEntry{CachedAt: entry.CachedAt, Detail: entry.Detail}
+	meta := CacheEntry{
+		CachedAt:          entry.CachedAt,
+		Detail:            entry.Detail,
+		Actresses:         entry.Actresses,
+		ActressesResolved: entry.ActressesResolved,
+	}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return err

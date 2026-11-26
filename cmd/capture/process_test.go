@@ -72,7 +72,12 @@ func TestProcessVideoCacheFlow(t *testing.T) {
 	api := &client.Client{}
 	c := cache.New(cacheDir)
 	for _, movieCode := range []string{"FC2-PPV-1234567", "ABF-004"} {
-		if err := c.Store(movieCode, &cache.CacheEntry{CachedAt: time.Now(), Detail: testDetail(), Poster: png, ExtraFanart: [][]byte{png, png}}); err != nil {
+		// ActressesResolved: these entries stand in for current-format cache
+		// entries, so the cached path makes no extra detail-page request.
+		if err := c.Store(movieCode, &cache.CacheEntry{
+			CachedAt: time.Now(), Detail: testDetail(), Poster: png, ExtraFanart: [][]byte{png, png},
+			Actresses: []string{"女優A", "女優B"}, ActressesResolved: true,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -241,8 +246,9 @@ func TestFixOutput(t *testing.T) {
 	os.WriteFile(filepath.Join(movieFolder, "poster.jpg"), cover, 0644)      // landscape poster (legacy)
 	os.WriteFile(filepath.Join(movieFolder, "fanart.jpg"), cover[:12], 0644) // truncated
 
-	api := &client.Client{} // nil internals: any network attempt would panic
-	fixOutput(context.Background(), api, c, out, fixTargets{}, false)
+	// No api (offline): the actress lookup is skipped, so every actor keeps
+	// its symlink and the repair loop never touches the network.
+	fixOutput(context.Background(), nil, c, out, fixTargets{}, false)
 
 	// NFO repaired
 	if !cache.ValidNFOFile(filepath.Join(movieFolder, "ABF-004.nfo")) {
@@ -270,7 +276,7 @@ func TestFixOutput(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(movieFolder, "poster.jpg"), portraitJPEG(t, 40, 60), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fixOutput(context.Background(), api, c, out, fixTargets{poster: true}, false)
+	fixOutput(context.Background(), nil, c, out, fixTargets{poster: true}, false)
 	if portrait, _ := imageutil.IsPortraitFile(filepath.Join(movieFolder, "poster.jpg")); !portrait {
 		t.Error("forced poster re-crop failed")
 	}
@@ -356,5 +362,76 @@ func TestQuarantineFailed(t *testing.T) {
 	}
 	if len(files) != 0 {
 		t.Errorf("rescan found %d files, want 0 (failed/ must be skipped)", len(files))
+	}
+}
+
+// TestCastToLink covers actress-only symlinking: with a resolved actress set
+// only actresses are linked (male co-stars must not create actor entries);
+// with no resolution every actor is linked (pre-gender behavior).
+func TestCastToLink(t *testing.T) {
+	actors := []javdbapi.Actor{
+		{Name: "河合あすな"}, {Name: "野々浦暖"}, // actresses
+		{Name: "小田切ジュン"}, {Name: "セツネヒデユキ"}, // male co-stars
+	}
+	got := castToLink(actors, map[string]bool{"河合あすな": true, "野々浦暖": true})
+	want := []string{"河合あすな", "野々浦暖"}
+	if len(got) != len(want) {
+		t.Fatalf("castToLink = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("castToLink = %v, want %v", got, want)
+		}
+	}
+
+	// unresolved (nil set) links everyone
+	if got := castToLink(actors, nil); len(got) != len(actors) {
+		t.Errorf("unresolved castToLink = %v, want all %d actors", got, len(actors))
+	}
+	// resolved but no match links nobody (unknown cast)
+	if got := castToLink(actors, map[string]bool{}); len(got) != 0 {
+		t.Errorf("castToLink with empty set = %v, want none", got)
+	}
+}
+
+// TestNFOActorType covers the <type> element: female/male when resolved,
+// omitted entirely when the actress list was not resolved.
+func TestNFOActorType(t *testing.T) {
+	if got := actorType("河合あすな", map[string]bool{"河合あすな": true}); got != "female" {
+		t.Errorf("actress type = %q, want female", got)
+	}
+	if got := actorType("小田切ジュン", map[string]bool{"河合あすな": true}); got != "male" {
+		t.Errorf("male type = %q, want male", got)
+	}
+	if got := actorType("河合あすな", nil); got != "" {
+		t.Errorf("unresolved type = %q, want empty", got)
+	}
+
+	// end-to-end: the element lands in the NFO for resolved entries and is
+	// absent for unresolved ones.
+	dir := t.TempDir()
+	d := testDetail()
+	mixed := map[string]bool{"女優A": true}
+	nfoPath := filepath.Join(dir, "ACTRESS-001.nfo")
+	if err := createNFOFile(nfoPath, "ACTRESS-001", d, mixed); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(nfoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "<type>female</type>") {
+		t.Error("resolved NFO missing <type>female</type>")
+	}
+	if !strings.Contains(string(data), "<type>male</type>") {
+		t.Error("resolved NFO missing <type>male</type> for co-star")
+	}
+
+	if err := createNFOFile(nfoPath, "ACTRESS-001", d, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(nfoPath)
+	if strings.Contains(string(data), "<type>") {
+		t.Error("unresolved NFO must omit <type>")
 	}
 }

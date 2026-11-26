@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/RPbro/javdbapi"
 
 	"github.com/gitsang/capture/pkg/cache"
@@ -142,6 +144,51 @@ func sdkHTTPClient(insecure bool, proxyURL, cookie string) *http.Client {
 		Timeout:   30 * time.Second,
 		Transport: &cookieTransport{base: tr, cookie: cookie},
 	}
+}
+
+// ActressNames returns the names of actors javdb marks as female on the
+// detail page of videoID. javdb renders the 演員 panel as
+//
+//	<a class="actor-female" href="/actors/X">name</a>, <a href="/actors/Y">name</a>, ...
+//
+// so the class attribute is the only gender signal: actresses carry
+// "actor-female" (every one of them in multi-actress works), male actors
+// carry no class. The SDK maps a "symbol" child element that the real page
+// does not have, so its Actor.Gender is always "unknown"; this re-reads the
+// page to recover the information. The whole panel element (comma
+// separators included) is removed so the markup parses as one HTML root.
+func (c *Client) ActressNames(ctx context.Context, videoID string) (map[string]bool, error) {
+	if videoID == "" {
+		return nil, fmt.Errorf("empty video id")
+	}
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
+	body, err := c.getBytesOnce(ctx, "https://javdb.com/v/"+videoID)
+	if err != nil {
+		return nil, err
+	}
+	names, err := parseActressNames(body)
+	if err != nil {
+		return nil, fmt.Errorf("parse actresses: %w", err)
+	}
+	return names, nil
+}
+
+// parseActressNames extracts the female-flagged actor names from a javdb
+// detail page.
+func parseActressNames(body []byte) (map[string]bool, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	doc.Find("a.actor-female").Each(func(_ int, a *goquery.Selection) {
+		if name := strings.TrimSpace(a.Text()); name != "" {
+			names[name] = true
+		}
+	})
+	return names, nil
 }
 
 // SearchByCode finds the movie with the exact code and fetches its detail page.

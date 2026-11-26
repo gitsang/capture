@@ -65,7 +65,8 @@ func parseFixTargets(spec string) (fixTargets, error) {
 // corresponding target is forced; broken/missing ones are restored from
 // cached bytes or re-downloaded via api (nil api = offline).
 func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, movieCode string,
-	detail *javdbapi.VideoDetail, cover []byte, extraFanart [][]byte, t fixTargets) {
+	detail *javdbapi.VideoDetail, cover []byte, extraFanart [][]byte,
+	actresses map[string]bool, t fixTargets) {
 
 	movieFolder := filepath.Join(outputDir, "video", movieCode)
 	nfoPath := filepath.Join(movieFolder, movieCode+".nfo")
@@ -81,7 +82,7 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 	// NFO.
 	if !t.nfo && cache.ValidNFOFile(nfoPath) {
 		fmt.Printf("  📄 NFO already complete\n")
-	} else if err := createNFOFile(nfoPath, movieCode, detail); err != nil {
+	} else if err := createNFOFile(nfoPath, movieCode, detail, actresses); err != nil {
 		fmt.Printf("  ⚠️  Failed to create NFO file: %v\n", err)
 	} else {
 		fmt.Printf("  📄 Created NFO file\n")
@@ -205,9 +206,14 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 	if createFullnameSymlink(outputDir, movieCode, detail.Summary.Title, movieFolder) {
 		fmt.Printf("  🔗 fullname symlink created: %s %s\n", movieCode, detail.Summary.Title)
 	}
+	// Only actresses get actor/ symlinks: male co-stars would otherwise
+	// create bogus actor entries (a work with 1 actress and 5 actors would
+	// fan out into 6 links). castToLink picks the actresses when javdb's
+	// female flags were resolved, and falls back to everyone otherwise so an
+	// unresolved entry never loses links.
 	linkCount := 0
-	for _, actor := range detail.Actors {
-		if createIndexSymlink(outputDir, "actor", actor.Name, movieCode, movieFolder) {
+	for _, name := range castToLink(detail.Actors, actresses) {
+		if createIndexSymlink(outputDir, "actor", name, movieCode, movieFolder) {
 			linkCount++
 		}
 	}
@@ -217,6 +223,26 @@ func materializeArtifacts(ctx context.Context, api *client.Client, outputDir, mo
 		}
 	}
 	fmt.Printf("  🔗 %d actor/tag symlinks created/updated\n", linkCount)
+}
+
+// castToLink returns the actor names that should get an actor/ symlink.
+// When actresses is nil (gender not resolved) every actor is linked, which
+// is the pre-gender behavior; when resolved, only flagged actresses are.
+func castToLink(actors []javdbapi.Actor, actresses map[string]bool) []string {
+	if actresses == nil {
+		names := make([]string, 0, len(actors))
+		for _, a := range actors {
+			names = append(names, a.Name)
+		}
+		return names
+	}
+	var names []string
+	for _, a := range actors {
+		if actresses[a.Name] {
+			names = append(names, a.Name)
+		}
+	}
+	return names
 }
 
 // removeIndexSymlinks deletes all actor/tag/fullname symlinks pointing at
@@ -302,15 +328,29 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 				}
 				ef = append(ef, b)
 			}
-			entry = &cache.CacheEntry{CachedAt: time.Now(), Detail: d, Poster: cover, ExtraFanart: ef}
+			names, resolved := resolveActresses(ctx, api, d)
+			entry = &cache.CacheEntry{
+				CachedAt:          time.Now(),
+				Detail:            d,
+				Poster:            cover,
+				ExtraFanart:       ef,
+				Actresses:         names.names(),
+				ActressesResolved: resolved,
+			}
 			if err := c.Store(movieCode, entry); err != nil {
 				fmt.Printf("  ⚠️  Failed to write cache: %v\n", err)
 			}
 		} else {
 			fmt.Printf("  💾 Using cached result (cached at %s)\n", entry.CachedAt.Format(time.RFC3339))
+			// Older cache entries predate the actress list; resolve it now
+			// and persist so the fetch happens once per code, ever.
+			if _, resolved := entry.ActressSet(); !resolved {
+				backfillActresses(ctx, api, c, movieCode, entry)
+			}
 		}
 
-		materializeArtifacts(ctx, api, outputDir, movieCode, entry.Detail, entry.Poster, entry.ExtraFanart, t)
+		actresses, _ := entry.ActressSet()
+		materializeArtifacts(ctx, api, outputDir, movieCode, entry.Detail, entry.Poster, entry.ExtraFanart, actresses, t)
 		fixed++
 		fmt.Println()
 	}
@@ -332,4 +372,34 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 	}
 
 	fmt.Printf("Fix complete: %d repaired/verified, %d skipped\n", fixed, skipped)
+}
+
+// actressSet is the resolved set of actress names (nil = unresolved).
+type actressSet map[string]bool
+
+// names flattens the set for JSON storage (nil when unresolved).
+func (a actressSet) names() []string {
+	if a == nil {
+		return nil
+	}
+	out := make([]string, 0, len(a))
+	for n := range a {
+		out = append(out, n)
+	}
+	return out
+}
+
+// resolveActresses asks javdb which actors on this video's page are female.
+// resolved=false means the lookup failed (offline, no api, network error):
+// callers must keep the previous behavior instead of guessing.
+func resolveActresses(ctx context.Context, api *client.Client, detail *javdbapi.VideoDetail) (actressSet, bool) {
+	if api == nil || detail == nil || detail.Summary.ID == "" {
+		return nil, false
+	}
+	names, err := api.ActressNames(ctx, string(detail.Summary.ID))
+	if err != nil {
+		fmt.Printf("  ⚠️  Failed to resolve actresses: %v (all actors will be linked)\n", err)
+		return nil, false
+	}
+	return actressSet(names), true
 }

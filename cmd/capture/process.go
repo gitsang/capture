@@ -61,6 +61,21 @@ type NFOData struct {
 type NFOActor struct {
 	Name string `xml:"name"`
 	Role string `xml:"role"`
+	// Type is female/male when javdb's female flags were resolved, empty
+	// otherwise. Kodi/tinyMediaManager read it; Emby/Jellyfin ignore it.
+	Type string `xml:"type,omitempty"`
+}
+
+// actorType maps an actor to the NFO <type> value. Unknown when the
+// actress list was not resolved (nil): better silent than wrong.
+func actorType(name string, actresses map[string]bool) string {
+	if actresses == nil {
+		return ""
+	}
+	if actresses[name] {
+		return "female"
+	}
+	return "male"
 }
 
 func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, noCache bool, video VideoFile) {
@@ -77,12 +92,19 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	var detail *javdbapi.VideoDetail
 	var poster []byte
 	var extraFanart [][]byte
+	var actresses actressSet
 
 	if !noCache {
 		if entry := c.Load(video.Code); entry != nil {
 			detail = entry.Detail
 			poster = entry.Poster
 			extraFanart = entry.ExtraFanart
+			if set, ok := entry.ActressSet(); ok {
+				actresses = set
+			} else if set, ok := backfillActresses(ctx, api, c, video.Code, entry); ok {
+				// Cache predates the actress list: resolve once, persist it.
+				actresses = set
+			}
 			fmt.Printf("  💾 Using cached result (cached at %s)\n", entry.CachedAt.Format(time.RFC3339))
 		}
 	}
@@ -129,14 +151,26 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 			fmt.Printf("  🖼️  Fetched %d extrafanart images\n", fetched)
 		}
 
-		entry := &cache.CacheEntry{CachedAt: time.Now(), Detail: detail, Poster: poster, ExtraFanart: extraFanart}
+		names, resolved := resolveActresses(ctx, api, detail)
+		if resolved {
+			actresses = names
+		}
+
+		entry := &cache.CacheEntry{
+			CachedAt:          time.Now(),
+			Detail:            detail,
+			Poster:            poster,
+			ExtraFanart:       extraFanart,
+			Actresses:         actresses.names(),
+			ActressesResolved: resolved,
+		}
 		if err := c.Store(video.Code, entry); err != nil {
 			fmt.Printf("  ⚠️  Failed to write cache: %v\n", err)
 		}
 	}
 
 	// 2-4b. Materialize NFO + artwork (shared with --fix).
-	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, fixTargets{})
+	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, actresses, fixTargets{})
 
 	// 5. Move the video file. When the target already exists (cached rerun,
 	// duplicate source), remove the redundant source so it is not rescanned.
@@ -156,6 +190,22 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	} else {
 		fmt.Printf("  📁 Moved video file to: %s\n", newVideoPath)
 	}
+}
+
+// backfillActresses resolves and persists the actress list for a cache entry
+// written before the field existed, so the extra detail-page fetch happens
+// once per code instead of on every run.
+func backfillActresses(ctx context.Context, api *client.Client, c *cache.Cache, movieCode string, entry *cache.CacheEntry) (actressSet, bool) {
+	names, ok := resolveActresses(ctx, api, entry.Detail)
+	if !ok {
+		return nil, false
+	}
+	entry.Actresses = names.names()
+	entry.ActressesResolved = true
+	if err := c.Store(movieCode, entry); err != nil {
+		fmt.Printf("  ⚠️  Failed to update cache with actress list: %v\n", err)
+	}
+	return names, true
 }
 
 // quarantineFailed moves an unprocessable source file to {output}/failed/
@@ -327,7 +377,7 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 	return videoFiles, err
 }
 
-func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail) error {
+func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail, actresses map[string]bool) error {
 	s := detail.Summary
 
 	year, date := "", ""
@@ -389,7 +439,11 @@ func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail) erro
 		nfo.Tag = append(nfo.Tag, tag.Name)
 	}
 	for _, actor := range detail.Actors {
-		nfo.Actor = append(nfo.Actor, NFOActor{Name: actor.Name, Role: ""})
+		nfo.Actor = append(nfo.Actor, NFOActor{
+			Name: actor.Name,
+			Role: "",
+			Type: actorType(actor.Name, actresses),
+		})
 	}
 
 	xmlData, err := xml.MarshalIndent(nfo, "", "  ")

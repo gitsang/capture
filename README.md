@@ -8,7 +8,7 @@ A command-line tool that scans directories for video files, extracts movie codes
 - **Video Format Support**: Supports mp4, mkv, wmv, avi video formats
 - **Code Extraction**: Extracts movie codes case-insensitively, including FC2/FC2-PPV and multi-segment codes (e.g. `abf-004`, `fc2-ppv-1234567`, `T28-123`, `010120_001`)
 - **Metadata Fetching**: Uses javdb API to fetch comprehensive movie metadata
-- **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder
+- **File Organization**: Organizes into `video/`, `actor/`, `tag/` trees; actor and tag folders contain symlinks to the video folder. Only **actresses** get `actor/` links — javdb lists male co-stars in the same cast panel, and linking them would create bogus actor entries
 - **Caching**: Caches successful scrapes per code under `/tmp/capture` — everything per code in one folder `{CODE}/` ({CODE}.json metadata + raw poster.jpg/extrafanart-N.jpg); validates on-disk NFO/JPG completeness and repairs from cache; `--no-cache` bypasses the cache
 - **Rate Limiting & Retry**: Configurable minimum request interval (default 10s) and exponential-backoff retry (default 10s base, 5 attempts)
 - **NFO Generation**: Creates Kodi/Plex compatible NFO files with movie metadata
@@ -122,7 +122,8 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
 6. **NFO Creation**: Generates Emby/Jellyfin-style NFO files: CDATA `CODE-Title` titles, sorttitle, customrating/mpaa `JP-18+`, maker/label/num, premiered/releasedate/release, dual `<genre>`+`<tag>`, website link, CRLF line endings; maker, director and duration are filled when available
 7. **Image Download**: Downloads the cover as poster.jpg and fanart.jpg
 8. **File Moving**: Renames video files to match codes and moves them into `output/video/CODE/`
-9. **Index Symlinks**: For every actor and tag, creates `output/actor/<name>/CODE` and `output/tag/<name>/CODE` symlinks pointing at the video folder
+9. **Actress Resolution**: javdb marks actresses with `class="actor-female"` on the detail page (every actress in multi-actress works; male co-stars carry no class — its SDK `Actor.Gender` field is always `unknown` because the SDK reads a `symbol` element the page no longer has). The detail page HTML is re-read once per code to recover the list, cached as `actresses`/`actresses_resolved`, so later runs and `--fix` make no extra request
+10. **Index Symlinks**: For every actress and tag, creates `output/actor/<name>/CODE` and `output/tag/<name>/CODE` symlinks pointing at the video folder. All actresses of a multi-actress work get links. Codes whose actress list could not be resolved fall back to linking every cast member
 
 ## 5. Output Structure
 
@@ -158,7 +159,7 @@ The generated NFO files include:
 - Runtime (`Nminutes`), year, premiered/releasedate/release
 - Studio/maker, director, label (series), num (lowercase code)
 - Genres and tags (both from site tags)
-- Actors
+- Actors, each with `<type>female|male</type>` when the actress list was resolved (Kodi/tinyMediaManager read it; Emby/Jellyfin ignore it). The element is omitted entirely when unresolved, rather than guessing
 - Poster/thumb/fanart references, cover URL, javdatabase website link
 - CRLF (DOS) line endings
 
