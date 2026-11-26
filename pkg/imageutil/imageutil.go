@@ -1,6 +1,7 @@
 // Package imageutil provides artwork helpers: completeness checks and
-// javdb cover cropping (the right ~44.5% of the full DVD cover is the
-// portrait movie poster; ~52.7% would still include the spine).
+// javdb cover cropping (the right ~47.4% of the full DVD cover is the
+// portrait movie poster; wider crops include the spine, narrower ones
+// cut into the poster artwork).
 package imageutil
 
 import (
@@ -46,10 +47,11 @@ func IsPortraitFile(path string) (bool, error) {
 	return cfg.Height > cfg.Width, nil
 }
 
-// javdb full covers are ~1.47:1 landscape: back cover (~48%) + spine
-// (~7.5%) + front poster (~44.5%). Verified against real covers: a 0.527
-// ratio still includes the spine strip on the poster's left edge.
-const posterWidthRatio = 0.445
+// javdb full covers are ~1.48:1 landscape: back cover + spine + front
+// poster. Verified against a known-good crop (input/poster): an 840px-wide
+// cover yields a 398px-wide poster, i.e. 398/840 ≈ 0.474. The previous
+// 0.445 cut ~28px of artwork off the poster's left edge.
+const posterWidthRatio = 0.474
 
 // CropPoster extracts the portrait front poster from a javdb full cover.
 // Landscape covers are cropped to the right posterWidthRatio of the width

@@ -133,7 +133,7 @@ output/
 │   ├── ABCD-180/
 │   │   ├── ABCD-180.mp4      # Renamed video file
 │   │   ├── ABCD-180.nfo      # Movie metadata
-│   │   ├── poster.jpg        # Portrait poster (right 52.7% crop of cover)
+│   │   ├── poster.jpg        # Portrait poster (right 47.4% crop of cover)
 │   │   ├── fanart.jpg        # Full landscape cover
 │   │   ├── thumb.jpg         # Thumbnail (same full cover)
 │   │   └── extrafanart/      # Screenshots
