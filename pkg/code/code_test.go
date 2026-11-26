@@ -64,6 +64,15 @@ func TestExtract(t *testing.T) {
 		{"ABF-123456789.mp4", "ABF-123456789"},     // 9-digit run
 		{"fc2-1234.mp4", "FC2-1234"},               // below FC2 minimum, multi-segment picks it up
 		{"movie2023.mp4", "MOVIE-2023"},            // year-like word
+		// heyzo underscore forms
+		{"heyzo_hd_0474_full.mp4", "HEYZO-0474"},
+		{"HEYZO_0521.mp4", "HEYZO-0521"},
+		// long DMM-style prefixes and dot-separated letter suffix
+		{"yrnkmtndvaj-642.mkv", "YRNKMTNDVAJ-642"},
+		{"YRNKMTNDVAJ-647A.2025.1080p.DMM.WEB-DL.AAC2.0.H.264-MTeam.mkv", "YRNKMTNDVAJ-647"},
+		{"YRNKNKJDVAJ-640A.2024.1080p.DMM.WEB-DL.AAC2.0.H.264-MTeam.mkv", "YRNKNKJDVAJ-640"},
+		// site-prefix noise
+		{"hhd800.com@FC2-PPV-4573738.mp4", "FC2-PPV-4573738"},
 	}
 	for _, c := range cases {
 		if got := Extract(c.filename); got != c.want {

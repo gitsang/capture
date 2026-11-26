@@ -179,9 +179,9 @@ Patterns are tried in a fixed fallback order. Higher tiers win so that noise in 
 
 | # | Tier | Pattern | Examples → extracted |
 |---|------|---------|---------------------|
-| 1 | **Standard** | 2–10 letters + `-` + 2–6 digits; optionally followed by 1–2 trailing letters (dropped) | `ABF-004` → `ABF-004`; `ssni-123` → `SSNI-123`; `start-281ch` → `START-281`; `SSIS-001C` → `SSIS-001`; `ABP-123-C` → `ABP-123` |
+| 1 | **Standard** | 2–12 letters + `-` + 2–6 digits; optionally followed by 1–2 trailing letters, `-`/`.`-separated or glued (dropped) | `ABF-004` → `ABF-004`; `start-281ch` → `START-281`; `SSIS-001C` → `SSIS-001`; `ABP-123-C` → `ABP-123`; `YRNKMTNDVAJ-647A.2025.1080p...` → `YRNKMTNDVAJ-647` |
 | 2 | **FC2** | `FC2` + optional `PPV` + 5–8 digits; separators `-`/`_`/space or none | `fc2-ppv-1234567`, `FC2PPV-1234567`, `fc2-1234567` → `FC2-PPV-1234567` |
-| 3 | **Glued** | 2–10 letters immediately followed by 2–6 digits, no separator; an optional 1–3 digit prefix is dropped | `hunter003` → `HUNTER-003`; `SSNI497` → `SSNI-497`; `476MLA095` → `MLA-095` |
+| 3 | **Glued / HEYZO** | 2–12 letters immediately followed by 2–6 digits (optional 1–3 digit prefix dropped); or `HEYZO` + `_`/`-`-joined segments + number | `hunter003` → `HUNTER-003`; `476MLA095` → `MLA-095`; `heyzo_hd_0474_full` → `HEYZO-0474` |
 | 4 | **Multi-segment** | alphanumeric prefix (must contain ≥1 letter) + 1–3 `-number` groups | `T28-123`, `3DSVR-123`, `1Pondo-010120-001` |
 | 5 | **Date-style** | 6 digits + `_`/`-` + 2–3 digits (1pondo/caribbean ids) | `010120_001` → `010120-001`; `123119-001-carib` → `123119-001` |
 
@@ -189,7 +189,7 @@ Patterns are tried in a fixed fallback order. Higher tiers win so that noise in 
 
 - **Leading dates**: `2020-12-12 MIMK-079 ...` → `MIMK-079` (Standard wins; a bare date matches no tier — Multi-segment requires a letter in its prefix)
 - **Resolution/codec tags**: `1080p`, `720P`, `x264`, `h264`, `HEVC` are not codes (fewer than 2 letters or no digits)
-- **Prefix noise**: `720P-ABP-123` → `ABP-123`
+- **Prefix noise**: `720P-ABP-123` → `ABP-123`; `hhd800.com@FC2-PPV-4573738` → `FC2-PPV-4573738`
 - **Part suffixes**: `abc-123-cd1` → `ABC-123` (the `cd1` tail is outside the Standard match)
 - **Word boundaries**: all patterns anchor on `\b`, so codes embedded in longer words are not partially matched
 

@@ -11,7 +11,8 @@ import (
 //     Tried first so a leading date like "2020-12-12" never beats the real code.
 //  2. FC2: fc2-ppv-1234567 / fc2ppv-1234567 / fc2-1234567 (dash/space/underscore
 //     separators, optional PPV).
-//  3. Glued: letters+digits without separator, e.g. hunter003, SSNI497.
+//  3. Glued: letters+digits without separator, e.g. hunter003, SSNI497;
+//     also underscore-joined heyzo_hd_0474_full -> HEYZO-0474.
 //  4. Multi-segment: alphanumeric prefix with digits, e.g. T28-123, 3DSVR-123,
 //     1Pondo-010120-001.
 //  5. Date-style: 1pondo/caribbean numeric ids like 010120_001.
@@ -19,8 +20,9 @@ import (
 // All patterns are case-insensitive; results are normalized to upper case
 // with uniform "-" separators.
 var (
-	// Trailing letter suffixes are tolerated: START-281ch, ABP-123-C, SSIS-001C.
-	standardPattern = regexp.MustCompile(`(?i)\b([A-Z]{2,10}-\d{2,6})(?:-?[A-Z]{1,2})?\b`)
+	// Trailing letter suffixes are tolerated: START-281ch, ABP-123-C,
+	// SSIS-001C, YRNKMTNDVAJ-647A (suffix may be dot-separated too).
+	standardPattern = regexp.MustCompile(`(?i)\b([A-Z]{2,12}-\d{2,6})(?:[-.]?[A-Z]{1,2})?\b`)
 	fc2Pattern      = regexp.MustCompile(`(?i)\bFC2[-_ ]?(?:PPV[-_ ]?)?(\d{5,8})\b`)
 	// Prefix must contain at least one letter, otherwise a bare date
 	// (2020-12-12) would masquerade as a multi-segment code.
@@ -29,7 +31,11 @@ var (
 	// digits are allowed (476MLA095 -> MLA-095) but a leading digit run
 	// right before the letters usually is a date fragment, so only strip
 	// it when the remainder still starts with letters.
-	gluedPattern     = regexp.MustCompile(`(?i)\b(\d{0,3})([A-Z]{2,10})(\d{2,6})\b`)
+	gluedPattern = regexp.MustCompile(`(?i)\b(\d{0,3})([A-Z]{2,12})(\d{2,6})\b`)
+	// heyzo_hd_0474_full: label + underscore-joined segments + number.
+	// Leading  only: the number is usually followed by "_full", where
+	// a trailing  would fail (underscore is a word character).
+	heyzoPattern     = regexp.MustCompile(`(?i)\bHEYZO(?:[_-][A-Z]+)*[_-](\d{3,4})`)
 	dateStylePattern = regexp.MustCompile(`(?i)\b(\d{6}[-_]\d{2,3})\b`)
 )
 
@@ -46,6 +52,9 @@ func Extract(filename string) string {
 	}
 	if m := fc2Pattern.FindStringSubmatch(filename); m != nil {
 		return "FC2-PPV-" + m[1]
+	}
+	if m := heyzoPattern.FindStringSubmatch(filename); m != nil {
+		return "HEYZO-" + m[1]
 	}
 	if m := gluedPattern.FindStringSubmatch(filename); m != nil {
 		// hunter003 -> HUNTER-003, start-281ch handled by standard first;
