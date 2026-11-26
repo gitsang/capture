@@ -71,3 +71,26 @@ func TestExtract(t *testing.T) {
 		}
 	}
 }
+
+func TestMatch(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"ABC-001", "ABC-001", true},
+		{"abc-001", "ABC-001", true},
+		{" abc_001 ", "ABC-001", true}, // trim + underscore normalization
+		// FC2 equivalence: javdb mixes both spellings for the same movie.
+		{"FC2-PPV-1234567", "FC2-1234567", true},
+		{"FC2-1234567", "FC2-PPV-1234567", true},
+		{"FC2-PPV-1234567", "FC2-PPV-7654321", false},
+		{"ABC-001", "ABC-002", false},
+		{"ABC-001", "ABCD-001", false},
+		{"", "", true},
+	}
+	for _, c := range cases {
+		if got := Match(c.a, c.b); got != c.want {
+			t.Errorf("Match(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
