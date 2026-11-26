@@ -2,6 +2,7 @@ package code
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -70,6 +71,37 @@ func Extract(filename string) string {
 	}
 	return ""
 }
+
+// ZeroPadCandidates returns the code plus its zero-padded variants, most
+// plausible first: ECR-084 -> [ECR-084 ECR-0084 ECR-00084]. Older DMM
+// releases are numbered to a fixed width (ECR-0084, 015ecr0084r), so a
+// filename that dropped the leading zeros never matches the site's spelling.
+//
+// Padding only ADDS zeros, never strips them, so this can never turn a real
+// code into a different real one: MBD-016 yields MBD-0016/MBD-00016 and
+// never MBD-16, which is an unrelated movie on javdb.
+//
+// Only the number part is padded; the prefix must stay byte-identical.
+func ZeroPadCandidates(code string) []string {
+	code = Normalize(code)
+	i := strings.LastIndex(code, "-")
+	if i <= 0 || i == len(code)-1 {
+		return []string{code}
+	}
+	prefix, num := code[:i], code[i+1:]
+	if _, err := strconv.Atoi(num); err != nil {
+		return []string{code} // non-numeric tail (FC2-PPV, HEYZO-XXX)
+	}
+	out := []string{code}
+	for width := len(num) + 1; width <= maxPaddedDigits; width++ {
+		out = append(out, prefix+"-"+strings.Repeat("0", width-len(num))+num)
+	}
+	return out
+}
+
+// maxPaddedDigits bounds zero padding. DMM's widest observed numbering is
+// 5 digits (118mbd00016); going further only costs requests.
+const maxPaddedDigits = 5
 
 // Normalize canonicalizes a code for comparison (upper case, "-" only).
 func Normalize(code string) string {

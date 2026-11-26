@@ -103,3 +103,39 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+// TestZeroPadCandidates covers the older-DMM numbering fix: filenames drop
+// leading zeros (ecr-084) while the sites spell codes at a fixed width
+// (ECR-0084, 015ecr0084r). Padding only ADDS zeros and never strips them, so
+// MBD-016 must never become MBD-16 - that is a different movie which javdb
+// carries alongside MBD-016 in the same result set.
+func TestZeroPadCandidates(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"ECR-084", []string{"ECR-084", "ECR-0084", "ECR-00084"}},
+		{"ecr-084", []string{"ECR-084", "ECR-0084", "ECR-00084"}},
+		// already at max width (5 digits): no further variants
+		{"MBD-00123", []string{"MBD-00123"}},
+		// padding must never shorten a code
+		{"MBD-016", []string{"MBD-016", "MBD-0016", "MBD-00016"}},
+		// FC2 numbers are never zero-padded (and 7 digits exceeds the cap)
+		{"FC2-PPV-4573738", []string{"FC2-PPV-4573738"}},
+		{"HEYZO", []string{"HEYZO"}},
+		{"", []string{""}},
+	}
+	for _, c := range cases {
+		got := ZeroPadCandidates(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("ZeroPadCandidates(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("ZeroPadCandidates(%q) = %v, want %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}

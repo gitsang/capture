@@ -23,6 +23,7 @@ var (
 	proxyURL      string
 	insecure      bool
 	cookie        string
+	noFallback    bool
 	interval      time.Duration
 	retryBase     time.Duration
 	retryAttempts int
@@ -56,6 +57,7 @@ func init() {
 	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
 	rootCmd.Flags().BoolVar(&insecure, "insecure", false, "Skip TLS certificate verification (for MITM proxies)")
 	rootCmd.Flags().StringVar(&cookie, "cookie", "", "Cookie header for javdb.com from a logged-in browser session (e.g. \"_jdb_session=...\")")
+	rootCmd.Flags().BoolVar(&noFallback, "no-fallback", false, "Only use javdb; do not fall back to r18.dev when a code is missing")
 	rootCmd.Flags().DurationVar(&interval, "interval", 10*time.Second, "Minimum interval between HTTP requests (0 disables)")
 	rootCmd.Flags().DurationVar(&retryBase, "retry-base", 10*time.Second, "Initial retry backoff delay (doubles each retry)")
 	rootCmd.Flags().IntVar(&retryAttempts, "retry-attempts", 5, "Maximum attempts per request (1 disables retries)")
@@ -87,6 +89,19 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// clientConfig collects the flags shared by both run modes.
+func clientConfig() client.Config {
+	return client.Config{
+		Interval:      interval,
+		RetryBase:     retryBase,
+		RetryAttempts: retryAttempts,
+		ProxyURL:      proxyURL,
+		Insecure:      insecure,
+		Cookie:        cookie,
+		NoFallback:    noFallback,
 	}
 }
 
@@ -130,7 +145,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
 		}
-		api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure, cookie)
+		api, err := client.New(clientConfig())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 			return
@@ -158,7 +173,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("Found %d video files\n\n", len(videoFiles))
 
-	api, err := client.New(interval, retryBase, retryAttempts, proxyURL, insecure, cookie)
+	api, err := client.New(clientConfig())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 		return

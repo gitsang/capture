@@ -377,6 +377,16 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 	return videoFiles, err
 }
 
+// websiteFor links to the javdb page when the movie came from javdb. Entries
+// resolved through the r18.dev fallback have no javdb id, and a javdatabase
+// URL for a movie javdb does not carry would just 404.
+func websiteFor(movieCode, videoID string) string {
+	if videoID == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://javdb.com/v/%s", videoID)
+}
+
 func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail, actresses map[string]bool) error {
 	s := detail.Summary
 
@@ -432,7 +442,7 @@ func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail, actr
 		ReleaseDate:   date,
 		Release:       date,
 		Cover:         s.CoverURL,
-		Website:       fmt.Sprintf("https://www.javdatabase.com/movies/%s", strings.ToLower(movieCode)),
+		Website:       websiteFor(movieCode, string(s.ID)),
 	}
 	for _, tag := range detail.Tags {
 		nfo.Genre = append(nfo.Genre, tag.Name)

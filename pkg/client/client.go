@@ -18,8 +18,8 @@ import (
 	"github.com/RPbro/javdbapi"
 
 	"github.com/gitsang/capture/pkg/cache"
-	"github.com/gitsang/capture/pkg/code"
 	"github.com/gitsang/capture/pkg/limit"
+	"github.com/gitsang/capture/pkg/r18"
 )
 
 // Client wraps the javdbapi SDK plus a shared limiter used for image
@@ -28,6 +28,26 @@ type Client struct {
 	api     *javdbapi.Client
 	limiter *limit.Limiter
 	http    *http.Client
+	// probe is used for existence checks (image probing): it shares the
+	// proxy/backoff settings but refuses to follow redirects, because the
+	// DMM CDN signals a missing image with a 302 to a placeholder.
+	probe *http.Client
+	// r18api is the fallback source for codes javdb definitively lacks.
+	// nil disables the fallback (offline --fix, tests).
+	r18api *r18.Client
+}
+
+// Config holds the knobs shared by every client construction.
+type Config struct {
+	Interval      time.Duration
+	RetryBase     time.Duration
+	RetryAttempts int
+	ProxyURL      string
+	Insecure      bool
+	Cookie        string
+	// NoFallback disables the r18.dev fallback: only javdb is consulted.
+	// Useful when a foreign/English title is worse than no result at all.
+	NoFallback bool
 }
 
 // New builds the SDK client. Retry/backoff and API rate limiting are
@@ -36,7 +56,9 @@ type Client struct {
 // insecure skips TLS certificate verification (useful with MITM proxies);
 // cookie (optional) is a browser Cookie header value (e.g. "_jdb_session=...")
 // attached to every javdb request so logged-in sessions can be reused.
-func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, insecure bool, cookie string) (*Client, error) {
+func New(cfg Config) (*Client, error) {
+	interval, retryBase, retryAttempts := cfg.Interval, cfg.RetryBase, cfg.RetryAttempts
+	proxyURL, insecure, cookie := cfg.ProxyURL, cfg.Insecure, cfg.Cookie
 	limiter := limit.New(interval)
 
 	// Primary pacing is our jittered limiter (interval ±50%), applied before
@@ -84,13 +106,30 @@ func New(interval, retryBase time.Duration, retryAttempts int, proxyURL string, 
 		return nil, err
 	}
 
+	var r18Client *r18.Client
+	if !cfg.NoFallback {
+		r18Client, err = r18.New(proxyURL, insecure)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	httpClient := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: &cookieTransport{base: imgTransport, cookie: cookie},
+	}
 	return &Client{
 		api:     api,
 		limiter: limiter,
-		http: &http.Client{
-			Timeout:   60 * time.Second,
-			Transport: &cookieTransport{base: imgTransport, cookie: cookie},
+		http:    httpClient,
+		probe: &http.Client{
+			Timeout:   httpClient.Timeout,
+			Transport: httpClient.Transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
+		r18api: r18Client,
 	}, nil
 }
 
@@ -189,36 +228,6 @@ func parseActressNames(body []byte) (map[string]bool, error) {
 		}
 	})
 	return names, nil
-}
-
-// SearchByCode finds the movie with the exact code and fetches its detail page.
-func (c *Client) SearchByCode(ctx context.Context, movieCode string) (*javdbapi.VideoDetail, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
-	page, err := c.api.Search(ctx, javdbapi.SearchQuery{Keyword: movieCode})
-	if err != nil {
-		if errors.Is(err, javdbapi.ErrEmptyResult) || errors.Is(err, javdbapi.ErrNotFound) {
-			return nil, fmt.Errorf("no results for %s", movieCode)
-		}
-		return nil, err
-	}
-
-	var summary *javdbapi.VideoSummary
-	for i := range page.Items {
-		if code.Match(page.Items[i].Code, movieCode) {
-			summary = &page.Items[i]
-			break
-		}
-	}
-	if summary == nil {
-		return nil, fmt.Errorf("no exact match for %s in %d results", movieCode, len(page.Items))
-	}
-
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
-	return c.api.Detail(ctx, summary.ID)
 }
 
 // fetchBytes GETs url with rate limiting and exponential-backoff retry.

@@ -100,6 +100,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
   - e.g. `capture --fix poster,symlink`; cache is used when present, codes missing from cache are scraped from the network (unless the scrape fails they are skipped)
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
+- `--no-fallback`: Only consult javdb; do not fall back to r18.dev when a code is missing (see §9.1). Useful when an English title from DMM is worse than no result at all
 - `--cookie`: Cookie header from a logged-in javdb browser session (e.g. `"_jdb_session=..."`), attached to javdb.com requests only. Some detail pages require login; copy the cookie from your browser's DevTools (Application → Cookies → javdb.com)
 - `--interval`: Base interval between HTTP requests, e.g. `30s`, `2m` (default: 10s; `0` disables). Each wait is randomized ±50% (10s → 5–15s) to avoid a fixed request rhythm. Applies to all requests (API + images); the SDK's internal rate limit runs at interval/3 as a safety net only
 - `--retry-base`: Initial retry backoff delay, doubles each retry (default: 10s)
@@ -196,7 +197,17 @@ Patterns are tried in a fixed fallback order. Higher tiers win so that noise in 
 
 ### 8.3 Exact matching against search results
 
-Extraction only proposes a candidate; the search result must **exactly match** it after normalization (upper case, `_`→`-`). `FC2-1234567` and `FC2-PPV-1234567` are treated as equal. If nothing matches (`no exact match`), the file is parked in `{output}/failed/` — see §4.
+Extraction only proposes a candidate; the search result must **exactly match** it after normalization (upper case, `_`→`-`). `FC2-1234567` and `FC2-PPV-1234567` are treated as equal. If nothing matches (`no exact match`), the code is retried against r18.dev (§9.1), then the file is parked in `{output}/failed/` — see §4.
+
+### 8.5 Zero-padded numbering
+
+Older DMM releases are numbered to a fixed width (`ECR-0084`, DMM content id `h_015ecr0084r`) while filenames often drop the leading zeros (`ecr-084-1-1.mp4`). Search therefore compares the results against the code *plus its zero-padded variants*:
+
+```
+ECR-084 → ECR-084, ECR-0084, ECR-00084
+```
+
+Padding only ever **adds** zeros, never strips them, and the prefix must stay byte-identical. This matters: `MBD-016` yields `MBD-0016`/`MBD-00016` and deliberately **not** `MBD-16`, which is an unrelated movie that javdb lists in the same result set — collapsing it by "same number after removing zeros" would silently subtitle the wrong film with the wrong cover.
 
 ### 8.4 Files without a recognizable code
 
@@ -209,6 +220,37 @@ Left untouched in the input directory and skipped (not quarantined), so renaming
 - Provides detailed progress and error messages
 - Retries transient failures with exponential backoff (honors `Retry-After`)
 - Writes NFO/images/cache atomically; truncated files are detected and repaired on the next run
+- Permanent HTTP errors (400/401/403/404/410) fail fast instead of burning retries
+- Unresolvable files are quarantined to `failed/` so later runs skip them
+
+### 9.1 Metadata sources
+
+javdb is the primary and authoritative source: it is the only one carrying
+**FC2 releases** and **Japanese titles**.
+
+When javdb definitively lacks a code, capture falls back to
+[**r18.dev**](https://r18.dev) (DMM's public metadata index). It fills gaps
+javdb never indexed — older DMM numbering such as `YRNKMTNDVAJ-647`,
+`MBD-016` and `OAE-286` — and supplies title, release date, runtime, maker,
+label, director, actresses, categories, the full DVD cover and the DMM
+screenshot gallery.
+
+The fallback is deliberately narrow:
+
+- **Only a definitive miss triggers it.** A network failure, rate limit or
+  parse error never falls through — otherwise a transient javdb problem would
+  silently cache lower-fidelity foreign metadata forever.
+- **FC2 codes never fall back**, since r18 carries no FC2 catalogue.
+- **Titles are English**, not Japanese. r18.dev has no Japanese title endpoint.
+- **NFO `<type>` is omitted** for fallback entries: r18 has no javdb video id,
+  so actress gender cannot be resolved. r18's cast is female-only, so the
+  unresolved fallback (link every actor) still yields correct `actor/` links.
+- **`<website>` is omitted**: javdb has no page for these movies.
+- A successful fallback is cached like any other result, so it costs one extra
+  request per code, ever.
+
+Use `--no-fallback` to disable it entirely. Progress shows `🌐 Found on
+r18.dev: <code>` when the fallback supplied the data.
 
 ## 10. Example Output
 
