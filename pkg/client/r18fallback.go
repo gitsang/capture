@@ -33,6 +33,9 @@ func NoResult(err error) bool { return errors.Is(err, errNoResult) }
 // fallback - it carries older DMM numbering that javdb never indexed. FC2 is
 // absent from r18, so those miss both and stay failures.
 func (c *Client) SearchByCode(ctx context.Context, movieCode string) (*javdbapi.VideoDetail, error) {
+	if c == nil {
+		return nil, fmt.Errorf("capture: no API client (offline)")
+	}
 	detail, err := c.searchJavdb(ctx, movieCode)
 	if err == nil {
 		return detail, nil

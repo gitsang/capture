@@ -92,7 +92,7 @@ func TestProcessVideoCacheFlow(t *testing.T) {
 		t.Fatalf("scanned %d files, want 3", len(files))
 	}
 	for _, f := range files {
-		processVideo(ctx, api, c, out, false, f)
+		processVideo(ctx, api, c, out, false, f, fixTargets{})
 	}
 
 	checks := []string{
@@ -180,7 +180,7 @@ func TestProcessVideoCacheFlow(t *testing.T) {
 		Path:     filepath.Join(in, "abf-004.mkv"),
 		Filename: "abf-004.mkv",
 		Code:     "ABF-004",
-	})
+	}, fixTargets{})
 	if !cache.ValidImageFile(posterPath) {
 		t.Error("truncated poster was not restored from cache")
 	}
@@ -194,7 +194,7 @@ func TestProcessVideoCacheFlow(t *testing.T) {
 		Path:     filepath.Join(in, "abf-004.mkv"),
 		Filename: "abf-004.mkv",
 		Code:     "ABF-004",
-	})
+	}, fixTargets{})
 	if !cache.ValidImageFile(efPath) {
 		t.Error("truncated extrafanart was not restored from cache")
 	}
@@ -319,6 +319,18 @@ func TestParseFixTargets(t *testing.T) {
 	if err != nil || !tt.missingOnly() {
 		t.Fatal("missing should select nothing forced")
 	}
+	tt, err = parseFixTargets("failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tt.failed {
+		t.Error("failed target not parsed")
+	}
+	// "failed" is an input selector, not an artifact: it forces nothing
+	if !tt.missingOnly() {
+		t.Error("failed must not force artifact regeneration")
+	}
+
 	tt, err = parseFixTargets("poster,symlink, nfo")
 	if err != nil || !tt.poster || !tt.symlink || !tt.nfo || tt.fanart || tt.missingOnly() {
 		t.Fatalf("bad parse: %+v err=%v", tt, err)
@@ -519,7 +531,7 @@ func TestPartsDoNotCollide(t *testing.T) {
 		// nil api: fully offline, cache suffices.
 		processVideo(context.Background(), nil, c, out, false, VideoFile{
 			Path: path, Filename: filepath.Base(path), Code: "KAVR-316", Part: p,
-		})
+		}, fixTargets{})
 	}
 
 	// every part must exist as its own file, with its own content
@@ -575,7 +587,7 @@ func TestCollidingTargetIsQuarantinedNotDeleted(t *testing.T) {
 
 	processVideo(context.Background(), nil, c, out, false, VideoFile{
 		Path: src, Filename: "ABF-004.mp4", Code: "ABF-004",
-	})
+	}, fixTargets{})
 
 	// the existing file must be untouched
 	got, err := os.ReadFile(filepath.Join(movieFolder, "ABF-004.mp4"))
@@ -588,5 +600,74 @@ func TestCollidingTargetIsQuarantinedNotDeleted(t *testing.T) {
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Error("source should have been moved out of the input dir")
+	}
+}
+
+// TestRetryFailed covers --fix failed: parked files are re-scraped, successes
+// move into video/CODE/, and files that still fail stay exactly where they
+// are (no -1/-2 copies piling up on repeated retries).
+func TestRetryFailed(t *testing.T) {
+	base := t.TempDir()
+	out, cacheDir := filepath.Join(base, "out"), filepath.Join(base, "cache")
+	failedDir := filepath.Join(out, "failed")
+	if err := os.MkdirAll(failedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	c := cache.New(cacheDir)
+	cover := landscapeJPEG(t, 100, 60)
+	// ABF-004 has a usable cache entry -> recovers offline.
+	if err := c.Store("ABF-004", &cache.CacheEntry{
+		CachedAt: time.Now(), Detail: testDetail(), Poster: cover,
+		ExtraFanart: [][]byte{cover}, ActressesResolved: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recoverable := filepath.Join(failedDir, "ABF-004.mp4")
+	if err := os.WriteFile(recoverable, []byte("recover-me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// No cache and nil api -> scraping fails, stays parked.
+	stuck := filepath.Join(failedDir, "ZZZ-999.mp4")
+	if err := os.WriteFile(stuck, []byte("stuck"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	retryFailed(context.Background(), nil, c, out, fixTargets{failed: true}, false)
+
+	// recovered: moved out of failed/, content intact
+	if _, err := os.Stat(recoverable); !os.IsNotExist(err) {
+		t.Error("recoverable file should have left failed/")
+	}
+	got, err := os.ReadFile(filepath.Join(out, "video", "ABF-004", "ABF-004.mp4"))
+	if err != nil || string(got) != "recover-me" {
+		t.Errorf("recovered video content = %q (err=%v)", got, err)
+	}
+
+	// stuck: still in failed/, single copy
+	if _, err := os.Stat(stuck); err != nil {
+		t.Errorf("unresolved file should stay in failed/: %v", err)
+	}
+	entries, err := os.ReadDir(failedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "ZZZ-999.mp4" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("failed dir should hold exactly the unresolved file, got %v", names)
+	}
+
+	// a second retry must not create ZZZ-999-1.mp4
+	retryFailed(context.Background(), nil, c, out, fixTargets{failed: true}, false)
+	entries, _ = os.ReadDir(failedDir)
+	if len(entries) != 1 {
+		t.Errorf("repeated retry accumulated copies: %d entries", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(failedDir, "ZZZ-999-1.mp4")); !os.IsNotExist(err) {
+		t.Error("repeated retry created a suffixed duplicate")
 	}
 }

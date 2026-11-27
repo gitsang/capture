@@ -12,6 +12,7 @@ import (
 
 	"github.com/gitsang/capture/pkg/cache"
 	"github.com/gitsang/capture/pkg/client"
+	"github.com/gitsang/capture/pkg/code"
 	"github.com/gitsang/capture/pkg/imageutil"
 )
 
@@ -23,6 +24,11 @@ type fixTargets struct {
 	extrafanart bool
 	poster      bool
 	symlink     bool
+	// failed selects {output}/failed as the input set instead of the video
+	// tree: each parked file is re-scraped and, on success, moved out to
+	// video/CODE/ like a fresh file. It is an input selector, not an
+	// artifact, so it forces no regeneration by itself.
+	failed bool
 }
 
 // missingOnly: only create/repair absent or broken artifacts (default).
@@ -53,8 +59,10 @@ func parseFixTargets(spec string) (fixTargets, error) {
 			t.poster = true
 		case "symlink":
 			t.symlink = true
+		case "failed":
+			t.failed = true
 		default:
-			return t, fmt.Errorf("unknown --fix target %q (valid: nfo,fanart,thumb,extrafanart,poster,symlink,missing)", part)
+			return t, fmt.Errorf("unknown --fix target %q (valid: nfo,fanart,thumb,extrafanart,poster,symlink,failed,missing)", part)
 		}
 	}
 	return t, nil
@@ -291,6 +299,12 @@ func removeIndexSymlinks(outputDir, movieCode, movieFolderAbs string) {
 // Cache is used when present; missing entries (or noCache=true) are
 // re-scraped from the network. Targets select forced regeneration.
 func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, t fixTargets, noCache bool) {
+	// failed/ is a separate input set, not a repair pass over the output tree.
+	if t.failed {
+		retryFailed(ctx, api, c, outputDir, t, noCache)
+		return
+	}
+
 	videoRoot := filepath.Join(outputDir, "video")
 	entries, err := os.ReadDir(videoRoot)
 	if err != nil {
@@ -378,6 +392,55 @@ func fixOutput(ctx context.Context, api *client.Client, c *cache.Cache, outputDi
 	}
 
 	fmt.Printf("Fix complete: %d repaired/verified, %d skipped\n", fixed, skipped)
+}
+
+// retryFailed re-scrapes the files parked in {output}/failed by an earlier
+// run. Each file goes through the normal processVideo path, so a success
+// moves it out to video/CODE/ and a file that still fails simply stays put.
+//
+// Files without a recognizable code are reported and left alone: the regular
+// scan skips them anyway, so moving them out would just bounce them back.
+func retryFailed(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, t fixTargets, noCache bool) {
+	failedDir := filepath.Join(outputDir, "failed")
+	entries, err := os.ReadDir(failedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("No failed directory to retry: %s\n", failedDir)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Failed to read %s: %v\n", failedDir, err)
+		return
+	}
+
+	var files []VideoFile
+	for _, e := range entries {
+		if e.IsDir() || !isVideoExt(e.Name()) {
+			continue
+		}
+		movieCode, part := code.ExtractWithPart(e.Name())
+		files = append(files, VideoFile{
+			Path:     filepath.Join(failedDir, e.Name()),
+			Filename: e.Name(),
+			Code:     movieCode,
+			Part:     part,
+		})
+	}
+	fmt.Printf("Found %d video files under %s\n\n", len(files), failedDir)
+
+	recovered, kept := 0, 0
+	for i, video := range files {
+		fmt.Printf("[%d/%d] Retrying: %s\n", i+1, len(files), video.Filename)
+		processVideo(ctx, api, c, outputDir, noCache, video, t)
+		// processVideo does not report status; the file leaving failed/ is
+		// the signal that it was successfully placed in the output tree.
+		if _, err := os.Stat(video.Path); os.IsNotExist(err) {
+			recovered++
+		} else {
+			kept++
+		}
+		fmt.Println()
+	}
+	fmt.Printf("Retry complete: %d recovered, %d still in %s\n", recovered, kept, failedDir)
 }
 
 // actressSet is the resolved set of actress names (nil = unresolved).

@@ -51,7 +51,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
 	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
 	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached results and re-scrape (also applies to --fix)")
-	rootCmd.Flags().StringVar(&fix, "fix", "", "Repair the output directory instead of scanning input. Optional comma list of targets to force regeneration: nfo,fanart,thumb,extrafanart,poster,symlink (empty/missing = only create what is absent or broken)")
+	rootCmd.Flags().StringVar(&fix, "fix", "", "Repair the output directory instead of scanning input. Optional comma list of targets to force regeneration: nfo,fanart,thumb,extrafanart,poster,symlink (empty/missing = only create what is absent or broken). 'failed' re-scrapes the files parked in {output}/failed, e.g. --fix failed,nfo")
 	// Allow bare `--fix` (no value) to mean "missing".
 	rootCmd.Flags().Lookup("fix").NoOptDefVal = "missing"
 	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
@@ -150,11 +150,15 @@ func runCapture(cmd *cobra.Command, args []string) {
 			fmt.Fprintf(os.Stderr, "Failed to create client: %v\n", err)
 			return
 		}
-		if targets.missingOnly() {
+		switch {
+		case targets.failed:
+			fmt.Printf("Fix mode: retrying files in %s\n", filepath.Join(outputDir, "failed"))
+		case targets.missingOnly():
 			fmt.Println("Fix mode: repairing missing/broken artifacts only")
-		} else {
-			fmt.Printf("Fix mode: forcing regeneration of %s\n\n", fix)
+		default:
+			fmt.Printf("Fix mode: forcing regeneration of %s\n", fix)
 		}
+		fmt.Println()
 		fixOutput(ctx, api, cache.New(cacheDir), outputDir, targets, noCache)
 		return
 	}
@@ -182,7 +186,7 @@ func runCapture(cmd *cobra.Command, args []string) {
 
 	for i, video := range videoFiles {
 		fmt.Printf("[%d/%d] Processing: %s\n", i+1, len(videoFiles), video.Filename)
-		processVideo(ctx, api, c, outputDir, noCache, video)
+		processVideo(ctx, api, c, outputDir, noCache, video, fixTargets{})
 		fmt.Println()
 	}
 

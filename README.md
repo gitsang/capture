@@ -97,6 +97,7 @@ sha256sum -c capture-linux-amd64.tar.gz.sha256
   - `extrafanart`: re-write all screenshots
   - `poster`: re-crop the portrait poster from fanart
   - `symlink`: delete and re-create all actor/tag/fullname symlinks
+  - `failed`: re-scrape the files parked in `{output}/failed/` instead of the `video/` tree (see §8.5)
   - e.g. `capture --fix poster,symlink`; cache is used when present, codes missing from cache are scraped from the network (unless the scrape fails they are skipped)
 - `--proxy`: HTTP proxy URL for API and image requests (e.g. `http://127.0.0.1:7890`)
 - `--insecure`: Skip TLS certificate verification (for MITM proxies)
@@ -217,11 +218,29 @@ model tag, not a part.
 
 Extraction only proposes a candidate; the search result must **exactly match** it after normalization (upper case, `_`→`-`). `FC2-1234567` and `FC2-PPV-1234567` are treated as equal. If nothing matches (`no exact match`), the code is retried against r18.dev (§9.1), then the file is parked in `{output}/failed/` — see §4.
 
-### 8.5 Files without a recognizable code
+### 8.5 Retrying parked files (`--fix failed`)
+
+Files whose metadata could not be fetched are parked in `{output}/failed/` (§4). To retry them once the cause is fixed (javdb 403 cleared, proxy switched, interval raised):
+
+```bash
+capture --fix failed -o <output> --interval 15s
+```
+
+Each parked file is re-scraped through the normal pipeline and, on success, moved out to `video/CODE/` like any fresh file. A file that still fails simply stays in `failed/` — repeated retries never accumulate `-1`, `-2` copies.
+
+`failed` is an **input selector, not an artifact**, so it forces no regeneration on its own. Combine it with other targets when a previous run left incomplete artwork behind:
+
+```bash
+capture --fix failed,nfo,poster -o <output>
+```
+
+Files without a recognizable code are reported and left where they are; rename them first (§8.6).
+
+### 8.6 Files without a recognizable code
 
 Left untouched in the input directory and skipped (not quarantined), so renaming the file is enough to have it picked up on the next run.
 
-### 8.6 Zero-padded numbering
+### 8.7 Zero-padded numbering
 
 Older DMM releases are numbered to a fixed width (`ECR-0084`, DMM content id `h_015ecr0084r`) while filenames often drop the leading zeros (`ecr-084-1-1.mp4`). Search therefore compares the results against the code *plus its zero-padded variants*:
 

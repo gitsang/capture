@@ -82,7 +82,9 @@ func actorType(name string, actresses map[string]bool) string {
 	return "male"
 }
 
-func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, noCache bool, video VideoFile) {
+// t selects forcibly regenerated artifacts; the normal scan passes the zero
+// value (repair only what is missing/broken).
+func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outputDir string, noCache bool, video VideoFile, t fixTargets) {
 	if video.Code == "" {
 		fmt.Printf("  ⚠️  No code found in filename, skipping\n")
 		return
@@ -178,7 +180,7 @@ func processVideo(ctx context.Context, api *client.Client, c *cache.Cache, outpu
 	}
 
 	// 2-4b. Materialize NFO + artwork (shared with --fix).
-	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, actresses, fixTargets{})
+	materializeArtifacts(ctx, api, outputDir, video.Code, detail, poster, extraFanart, actresses, t)
 
 	// 5. Move the video file.
 	//
@@ -227,6 +229,12 @@ func quarantineFailed(outputDir string, video VideoFile) {
 	failedDir := filepath.Join(outputDir, "failed")
 	if err := os.MkdirAll(failedDir, 0755); err != nil {
 		fmt.Printf("  ⚠️  Failed to create failed dir: %v\n", err)
+		return
+	}
+	// Already parked (retried by --fix failed and failed again): leave it, so
+	// repeated retries do not accumulate -1, -2, -3 suffixed copies.
+	if filepath.Dir(video.Path) == failedDir {
+		fmt.Printf("  🚫 Still failing, kept in failed dir: %s\n", video.Path)
 		return
 	}
 	dst := filepath.Join(failedDir, video.Filename)
@@ -364,15 +372,7 @@ func scanVideoFiles(dir, absOutput string) ([]VideoFile, error) {
 			return nil
 		}
 
-		ext := strings.ToLower(filepath.Ext(path))
-		isVideo := false
-		for _, videoExt := range videoExts {
-			if ext == videoExt {
-				isVideo = true
-				break
-			}
-		}
-		if !isVideo {
+		if !isVideoExt(path) {
 			return nil
 		}
 
@@ -482,6 +482,17 @@ func createNFOFile(nfoPath, movieCode string, detail *javdbapi.VideoDetail, actr
 	xmlContent = strings.ReplaceAll(xmlContent, "\n", "\r\n")
 
 	return client.AtomicWrite(nfoPath, []byte(xmlContent), 0644)
+}
+
+// isVideoExt reports whether path has one of the video extensions we manage.
+func isVideoExt(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	for _, videoExt := range videoExts {
+		if ext == videoExt {
+			return true
+		}
+	}
+	return false
 }
 
 // videoFileName is the name a source takes inside the movie folder. The disc
