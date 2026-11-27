@@ -47,11 +47,37 @@ Output layout:
 }
 
 func init() {
+	// The --fix usage is multi-line; pflag pads every line to the usage
+	// column and leaves that padding behind on blank lines. Strip trailing
+	// whitespace per line so the blank lines are actually blank.
+	cobra.AddTemplateFunc("captureTrimLines", func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimRight(lines[i], " \t")
+		}
+		return strings.Join(lines, "\n")
+	})
+	rootCmd.SetUsageTemplate(strings.ReplaceAll(rootCmd.UsageTemplate(),
+		"FlagUsages | trimTrailingWhitespaces",
+		"FlagUsages | captureTrimLines | trimTrailingWhitespaces"))
+
 	rootCmd.Flags().StringVarP(&inputDir, "input", "i", ".", "Input directory to scan for video files")
 	rootCmd.Flags().StringVarP(&outputDir, "output", "o", "./output", "Output directory for organized files")
 	rootCmd.Flags().StringVar(&cacheDir, "cache-dir", "/tmp/capture", "Directory for cached scrape results (one file per code)")
 	rootCmd.Flags().BoolVar(&noCache, "no-cache", false, "Ignore cached results and re-scrape (also applies to --fix)")
-	rootCmd.Flags().StringVar(&fix, "fix", "", "Repair the output directory instead of scanning input. Optional comma list of targets to force regeneration: nfo,fanart,thumb,extrafanart,poster,symlink (empty/missing = only create what is absent or broken). 'failed' re-scrapes the files parked in {output}/failed, e.g. --fix failed,nfo")
+	rootCmd.Flags().StringVar(&fix, "fix", "", `Repair the output directory instead of scanning input.
+
+Optional comma list of targets to force regeneration:
+  nfo          regenerate the NFO from metadata
+  fanart       re-write fanart from the cached cover
+  thumb        re-copy thumb from fanart
+  extrafanart  re-write all screenshots
+  poster       re-crop the portrait poster from cover
+  symlink      delete and re-create all index symlinks
+  failed       re-scrape the files parked in {output}/failed
+
+Without targets (or "missing"), only absent or broken artifacts
+are created. See the README for details.`)
 	// Allow bare `--fix` (no value) to mean "missing".
 	rootCmd.Flags().Lookup("fix").NoOptDefVal = "missing"
 	rootCmd.Flags().StringVar(&proxyURL, "proxy", "", "HTTP proxy URL for API and image requests (e.g. http://127.0.0.1:7890)")
